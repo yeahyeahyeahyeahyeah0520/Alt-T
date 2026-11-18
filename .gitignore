@@ -1,0 +1,44 @@
+# Dependencies & Build Outputs
+node_modules/
+out/
+dist/
+dist-electron/
+release/
+coverage/
+.vite/
+
+# Logs & Crash Dumps
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Local Secrets, Config & Environment Overrides
+.env
+.env.*
+!.env.example
+config.json
+*.local.json
+!config.example.json
+
+# Backup, Temp, Shortcut & Lock Artifacts
+*.bak
+*.bak*
+*.tmp
+*.lnk
+*.tsbuildinfo
+clean-exit.flag
+intentional-quit.flag
+Singleton*
+BLOCKERS.md
+
+# OS, Editor & Agent Metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+desktop.ini
+.vscode/
+.idea/
+.gemini/
+.claude/
+.agents/

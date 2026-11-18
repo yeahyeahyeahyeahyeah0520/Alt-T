@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-windows:
+    name: Verify & Package Check (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies (zero node-gyp)
+        run: npm ci
+
+      - name: Typecheck (Main + Preload + Vue Renderer)
+        run: npm run typecheck
+
+      - name: Enforce architecture, VBS & zero-leakage gates
+        run: npm run check
+
+      - name: Run unit & fault-injection tests
+        run: npm test
+
+      - name: Build production bundles
+        run: npm run build
+
+      - name: Probe Win32 koffi FFI layout
+        run: node scripts/probe-koffi.mjs
+
+      - name: Run isolated Electron smoke test
+        shell: pwsh
+        env:
+          TTL_SMOKE: '1'
+        run: npm run smoke
+
+      - name: Verify unpacked Windows electron-builder & Fuses build
+        shell: pwsh
+        run: npx electron-builder --win --dir --publish never
