@@ -558,10 +558,14 @@ function sleep(ms: number): Promise<void> {
 /**
  * Pure classifier by executable basename (fallback when window class is generic).
  */
-export function classifyExeName(exeName: string): WindowInputKind {
+export function classifyExeName(
+  exeName: string,
+  extraWtExes: ReadonlySet<string> = new Set(),
+  extraConhostExes: ReadonlySet<string> = new Set()
+): WindowInputKind {
   const lower = exeName.trim().toLowerCase()
-  if (WT_EXE_NAMES.has(lower)) return 'wt'
-  if (CONHOST_EXE_NAMES.has(lower)) return 'conhost'
+  if (WT_EXE_NAMES.has(lower) || extraWtExes.has(lower)) return 'wt'
+  if (CONHOST_EXE_NAMES.has(lower) || extraConhostExes.has(lower)) return 'conhost'
   return 'normal'
 }
 
@@ -570,29 +574,44 @@ export function classifyExeName(exeName: string): WindowInputKind {
  * Checking window class first ensures console client processes (e.g. claude.exe, agy.exe,
  * python.exe, ssh.exe) running inside ConsoleWindowClass are never misclassified as 'normal'.
  */
-export function classifyTerminalWindow(className: string, exeName: string): WindowInputKind {
+export function classifyTerminalWindow(
+  className: string,
+  exeName: string,
+  extraWtExes: ReadonlySet<string> = new Set(),
+  extraConhostExes: ReadonlySet<string> = new Set()
+): WindowInputKind {
   const lowerClass = className.trim().toLowerCase()
   if (WT_CLASS_NAMES.has(lowerClass)) return 'wt'
   if (CONHOST_CLASS_NAMES.has(lowerClass) || lowerClass.startsWith('cygwin/x')) return 'conhost'
-  return classifyExeName(exeName)
+  return classifyExeName(exeName, extraWtExes, extraConhostExes)
 }
 
-export function classifyTerminalCopyKind(className: string, exeName: string): WindowInputKind {
+export function classifyTerminalCopyKind(
+  className: string,
+  exeName: string,
+  extraWtExes: ReadonlySet<string> = new Set(),
+  extraConhostExes: ReadonlySet<string> = new Set()
+): WindowInputKind {
   const lowerClass = className.trim().toLowerCase()
   if (WT_CLASS_NAMES.has(lowerClass)) return 'wt'
   if (CONHOST_CLASS_NAMES.has(lowerClass) || lowerClass.startsWith('cygwin/x')) return 'conhost'
   const lowerExe = exeName.trim().toLowerCase()
-  if (CONHOST_COPY_PASTE_EXES.has(lowerExe)) return 'conhost'
-  return classifyExeName(lowerExe)
+  if (CONHOST_COPY_PASTE_EXES.has(lowerExe) || extraConhostExes.has(lowerExe)) return 'conhost'
+  return classifyExeName(lowerExe, extraWtExes, extraConhostExes)
 }
 
-export function classifyTerminalPasteKind(className: string, exeName: string): WindowInputKind {
+export function classifyTerminalPasteKind(
+  className: string,
+  exeName: string,
+  extraWtExes: ReadonlySet<string> = new Set(),
+  extraConhostExes: ReadonlySet<string> = new Set()
+): WindowInputKind {
   const lowerClass = className.trim().toLowerCase()
   if (WT_CLASS_NAMES.has(lowerClass)) return 'wt'
   if (CONHOST_CLASS_NAMES.has(lowerClass) || lowerClass.startsWith('cygwin/x')) return 'conhost'
   const lowerExe = exeName.trim().toLowerCase()
-  if (CONHOST_COPY_PASTE_EXES.has(lowerExe)) return 'conhost'
-  return classifyExeName(lowerExe)
+  if (CONHOST_COPY_PASTE_EXES.has(lowerExe) || extraConhostExes.has(lowerExe)) return 'conhost'
+  return classifyExeName(lowerExe, extraWtExes, extraConhostExes)
 }
 
 /**
@@ -696,16 +715,43 @@ export function getClipboardSequenceNumber(): number {
   }
 }
 
-export function classifyWindowKind(hwnd: number): WindowInputKind {
-  return classifyTerminalPasteKind(getWindowClassName(hwnd), getWindowExeName(hwnd))
+export function classifyWindowKind(
+  hwnd: number,
+  extraWtExes: ReadonlySet<string> = new Set(),
+  extraConhostExes: ReadonlySet<string> = new Set()
+): WindowInputKind {
+  return classifyTerminalPasteKind(
+    getWindowClassName(hwnd),
+    getWindowExeName(hwnd),
+    extraWtExes,
+    extraConhostExes
+  )
 }
 
-export function classifyWindowCopyKind(hwnd: number): WindowInputKind {
-  return classifyTerminalCopyKind(getWindowClassName(hwnd), getWindowExeName(hwnd))
+export function classifyWindowCopyKind(
+  hwnd: number,
+  extraWtExes: ReadonlySet<string> = new Set(),
+  extraConhostExes: ReadonlySet<string> = new Set()
+): WindowInputKind {
+  return classifyTerminalCopyKind(
+    getWindowClassName(hwnd),
+    getWindowExeName(hwnd),
+    extraWtExes,
+    extraConhostExes
+  )
 }
 
-export function classifyWindowPasteKind(hwnd: number): WindowInputKind {
-  return classifyTerminalPasteKind(getWindowClassName(hwnd), getWindowExeName(hwnd))
+export function classifyWindowPasteKind(
+  hwnd: number,
+  extraWtExes: ReadonlySet<string> = new Set(),
+  extraConhostExes: ReadonlySet<string> = new Set()
+): WindowInputKind {
+  return classifyTerminalPasteKind(
+    getWindowClassName(hwnd),
+    getWindowExeName(hwnd),
+    extraWtExes,
+    extraConhostExes
+  )
 }
 
 export function isOwnProcessWindow(hwnd: number, selfPid = process.pid): boolean {
@@ -756,6 +802,10 @@ function getSelfIntegrityRid(api: Win32Api): number | null {
 /**
  * Detect whether Win32 UIPI will block SendInput from reaching `hwnd`
  * because the target window runs at a higher integrity level than our process.
+ *
+ * @note 当无法读取自身进程完整性级别时（极少见），函数保守返回 false（不报 UIPI）。
+ *       这避免了 Alt-T 以管理员权限运行时对同等权限目标窗口的误判。
+ *       漏报时 SendInput 静默失败，上层错误处理会将译文保留在剪贴板供手动粘贴。
  */
 export function isWindowElevatedOverSelf(hwnd: number, selfPid = process.pid): boolean {
   if (!hwnd) return false
@@ -785,8 +835,18 @@ export function isWindowElevatedOverSelf(hwnd: number, selfPid = process.pid): b
       try {
         const targetRid = api.getTokenIntegrityRid(hTok)
         if (targetRid === null) return false
-        const baselineRid = selfRid ?? 0x2000
-        return targetRid > baselineRid
+        if (selfRid === null) {
+          // 无法读取自身进程完整性级别时（极少见，常见于受限沙箱或 API 异常），
+          // 采用保守策略：不报 UIPI 阻断。
+          // 理由：误报 UIPI 会导致用户看到"请手动粘贴"提示且失去自动注入能力，
+          // 体验损耗远大于漏报。漏报时 SendInput 静默失败，译文仍在剪贴板，
+          // 用户可手动粘贴，损失有限。
+          return false
+        }
+        // 调用方 pasteTextToWindow / selectionService 在 isWindowElevatedOverSelf 返回 false 时
+        // 直接尝试 SendInput。若注入失败，sendInput 返回注入数 != 期望数，
+        // 上层 catch 会将译文保留在剪贴板，不会崩溃。
+        return targetRid > selfRid
       } finally {
         api.closeHandle(hTok)
       }

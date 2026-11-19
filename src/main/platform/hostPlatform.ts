@@ -240,16 +240,30 @@ export function injectMaskKey(): boolean {
   return false
 }
 
+function getCustomExeSets(): { extraWt: Set<string>; extraConhost: Set<string> } {
+  try {
+    const { configStore } = require('../services/configStore') as typeof import('../services/configStore')
+    const cfg = configStore.get()
+    const extraWt = new Set((cfg.customWtExeNames ?? []).map((s: string) => s.toLowerCase()))
+    const extraConhost = new Set((cfg.customConhostExeNames ?? []).map((s: string) => s.toLowerCase()))
+    return { extraWt, extraConhost }
+  } catch {
+    return { extraWt: new Set(), extraConhost: new Set() }
+  }
+}
+
 export function getTargetCopyKind(handle: number): WindowInputKind {
   if (process.platform === 'win32') {
-    return win32ClassifyWindowCopyKind(handle)
+    const { extraWt, extraConhost } = getCustomExeSets()
+    return win32ClassifyWindowCopyKind(handle, extraWt, extraConhost)
   }
   return getTargetInputKind(handle)
 }
 
 export function getTargetPasteKind(handle: number): WindowInputKind {
   if (process.platform === 'win32') {
-    return win32ClassifyWindowPasteKind(handle)
+    const { extraWt, extraConhost } = getCustomExeSets()
+    return win32ClassifyWindowPasteKind(handle, extraWt, extraConhost)
   }
   return getTargetInputKind(handle)
 }
@@ -262,7 +276,8 @@ export async function dispatchBackspaces(charCount: number): Promise<void> {
 
 export function getTargetInputKind(handle: number): WindowInputKind {
   if (process.platform === 'win32') {
-    return win32ClassifyWindowKind(handle)
+    const { extraWt, extraConhost } = getCustomExeSets()
+    return win32ClassifyWindowKind(handle, extraWt, extraConhost)
   }
   if (process.platform === 'darwin') {
     return macKindCache.get(handle) ?? 'normal'

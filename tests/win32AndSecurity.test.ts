@@ -4,7 +4,9 @@ import path from 'node:path'
 import {
   classifyExeName,
   classifyTerminalWindow,
-  isNonTargetWindowClass
+  isNonTargetWindowClass,
+  isWindowElevatedOverSelf,
+  setWin32ApiForTest
 } from '../src/main/platform/win32Input'
 import {
   classifyLinuxWmClass,
@@ -68,6 +70,27 @@ describe('Cross-OS terminal & shell window classification', () => {
     assert.equal(isNonTargetWindowClass('CASCADIA_HOSTING_WINDOW_CLASS'), false)
     assert.equal(isNonTargetWindowClass('Chrome_WidgetWin_1'), false)
     assert.equal(isNonTargetWindowClass('Notepad'), false)
+  })
+
+  it('supports custom extra terminal exe sets in classifyExeName and classifyTerminalWindow', () => {
+    assert.equal(classifyExeName('mycustom.exe'), 'normal')
+    assert.equal(classifyExeName('mycustom.exe', new Set(['mycustom.exe'])), 'wt')
+    assert.equal(classifyExeName('mycustom.exe', new Set(), new Set(['mycustom.exe'])), 'conhost')
+
+    assert.equal(classifyTerminalWindow('CustomClass', 'mycustom.exe', new Set(['mycustom.exe'])), 'wt')
+  })
+
+  it('returns false when self integrity rid is null (conservative fallback)', () => {
+    setWin32ApiForTest({
+      getTokenIntegrityRid: () => null,
+      openProcess: () => 1,
+      openProcessToken: () => 1
+    })
+    try {
+      assert.equal(isWindowElevatedOverSelf(123), false)
+    } finally {
+      setWin32ApiForTest(null)
+    }
   })
 })
 

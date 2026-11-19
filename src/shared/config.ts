@@ -146,6 +146,13 @@ function mergeProxy(raw: unknown): ProxyConfig {
   }
 }
 
+function mergeExeNameList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map((item) => item.trim().toLowerCase())
+}
+
 function mergeHistory(raw: unknown, limit: number): HistoryItem[] {
   if (!Array.isArray(raw) || limit <= 0) return []
   const out: HistoryItem[] = []
@@ -354,6 +361,8 @@ export function mergeConfig(raw: unknown): AppConfig {
         prompts: cloneDefaultPrompts()
       },
       proxy: { ...DEFAULT_CONFIG.proxy },
+      customWtExeNames: [],
+      customConhostExeNames: [],
       history: []
     }
   }
@@ -392,6 +401,8 @@ export function mergeConfig(raw: unknown): AppConfig {
       typeof raw.popupHeight === 'number' && Number.isFinite(raw.popupHeight)
         ? clamp(Math.round(raw.popupHeight), 200, 4000)
         : DEFAULT_CONFIG.popupHeight,
+    customWtExeNames: mergeExeNameList(raw.customWtExeNames),
+    customConhostExeNames: mergeExeNameList(raw.customConhostExeNames),
     history: mergeHistory(raw.history, historyLimit)
   }
 }

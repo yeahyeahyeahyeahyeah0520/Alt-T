@@ -89,6 +89,15 @@ describe('mergeConfig', () => {
     assert.equal(custom.autoLaunch, false)
     assert.equal(custom.hotkeys.directInputTranslate, 'Alt+Shift+T')
   })
+
+  it('merges custom terminal exe names and normalizes to lower case', () => {
+    const cfg = mergeConfig({
+      customWtExeNames: ['MyTerm.exe', '  CUSTOM-TERM.EXE  '],
+      customConhostExeNames: ['LEGACY.EXE', 123]
+    })
+    assert.deepEqual(cfg.customWtExeNames, ['myterm.exe', 'custom-term.exe'])
+    assert.deepEqual(cfg.customConhostExeNames, ['legacy.exe'])
+  })
 })
 
 describe('hotkey duplicate detection', () => {

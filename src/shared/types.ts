@@ -62,6 +62,10 @@ export interface AppConfig {
   historyLimit: number
   popupWidth: number
   popupHeight: number
+  /** 用户自定义追加到 wt 类终端的 exe 文件名列表（小写，含 .exe），默认 [] */
+  customWtExeNames?: string[]
+  /** 用户自定义追加到 conhost 类终端的 exe 文件名列表（小写，含 .exe），默认 [] */
+  customConhostExeNames?: string[]
   history: HistoryItem[]
 }
 
@@ -109,6 +113,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   historyLimit: 200,
   popupWidth: 460,
   popupHeight: 320,
+  customWtExeNames: [],
+  customConhostExeNames: [],
   history: []
 }
 
