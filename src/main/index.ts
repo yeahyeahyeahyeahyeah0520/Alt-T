@@ -46,8 +46,8 @@ function main(): void {
       if (Notification.isSupported()) {
         const safeMsg = scrubErrorText(err instanceof Error ? err.message : String(err))
         new Notification({
-          title: 'FlashPrompt 错误',
-          body: `发生未捕获异常: ${safeMsg}\n请查看日志或重启 FlashPrompt`
+          title: 'Alt-T 错误',
+          body: `发生未捕获异常: ${safeMsg}\n请查看日志或重启 Alt-T`
         }).show()
       }
     } catch {
@@ -67,7 +67,7 @@ function main(): void {
   app.disableHardwareAcceleration()
 
   if (SMOKE) {
-    app.setPath('userData', join(os.tmpdir(), 'flashprompt-smoke'))
+    app.setPath('userData', join(os.tmpdir(), 'alt-t-smoke'))
   }
 
   let popupWindow: PopupWindowController | null = null
@@ -78,7 +78,7 @@ function main(): void {
   if (!SMOKE) {
     if (isRunningOnHiddenDesktop()) {
       console.error(
-        '[fp] Refusing to start persistent GUI inside non-interactive sandbox desktop. Launch FlashPrompt from your desktop shortcut instead.'
+        '[fp] Refusing to start persistent GUI inside non-interactive sandbox desktop. Launch Alt-T from your desktop shortcut instead.'
       )
       app.exit(1)
       return
@@ -99,7 +99,7 @@ function main(): void {
   void app
     .whenReady()
     .then(async () => {
-      app.setAppUserModelId('com.flashprompt.app')
+      app.setAppUserModelId('com.alt-t.app')
       Menu.setApplicationMenu(null)
       if (os.platform() === 'darwin' && app.dock) {
         app.dock.hide()
@@ -261,7 +261,7 @@ function main(): void {
           logWarn(`hotkey conflicts at boot: ${summary}`)
           if (Notification.isSupported()) {
             new Notification({
-              title: 'FlashPrompt',
+              title: 'Alt-T',
               body: `以下快捷键注册冲突（将自动重试）：${summary}`
             }).show()
           }

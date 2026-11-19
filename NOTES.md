@@ -1,17 +1,17 @@
 # Engineering Notes & Evolution Log (`NOTES.md`)
 
-This document records verified runtime observations, architectural deviations from the original `SPEC.md`, and hardening enhancements implemented for the public open-source release of **FlashPrompt** (`https://github.com/yeahyeahyeahyeahyeah0520/flashprompt`).
+This document records verified runtime observations, architectural deviations from the original `SPEC.md`, and hardening enhancements implemented for the public open-source release of **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/alt-t`).
 
 ---
 
-## 1. Branding & Lineage: Clean-Room Decoupling to FlashPrompt
+## 1. Branding & Lineage: Clean-Room Decoupling to Alt-T
 
 1. **Initial Private Specification (`SPEC.md`)**: Originally drafted as an internal specification referencing `TTime Lite`.
-2. **IP & Trademark Decoupling**: Upstream TTime carries a custom license with commercial restrictions, appearance patent claims, and strict trademark protections. To eliminate any copyright, trademark, or appearance patent infringement risk, the project is 100% clean-room implemented from scratch and unified publicly under **FlashPrompt** (`yeahyeahyeahyeahyeah0520/flashprompt`, MIT license, `AppUserModelId = 'com.flashprompt.app'`).
+2. **IP & Trademark Decoupling**: Upstream TTime carries a custom license with commercial restrictions, appearance patent claims, and strict trademark protections. To eliminate any copyright, trademark, or appearance patent infringement risk, the project is 100% clean-room implemented from scratch and unified publicly under **Alt-T** (`yeahyeahyeahyeahyeah0520/alt-t`, MIT license, `AppUserModelId = 'com.alt-t.app'`).
 3. **Defensive Legacy Compatibility**:
    - **Dual Smoke Flags**: Both `FP_SMOKE=1` and legacy `TTL_SMOKE=1` are accepted in `src/main/index.ts`, `scripts/smoke-launch.mjs`, and `src/main/platform/autoLaunch.ts`.
    - **Legacy Watchdog & Quit Flag Cleanup**: `configStore.ts` and `autoLaunch.ts` clean up legacy test artifacts (`TTime Lite Watchdog.lnk`, `clean-exit.flag`, `intentional-quit.flag`) so existing test machines upgrade cleanly.
-   - **Read-Only Diagnostics**: `scripts/diagnose-hotkeys.mjs` inspects candidate userData folders (`FlashPrompt`, `TTime Lite`, `ttime-lite`) read-only via `fs.lstatSync` without stealing `SingletonLock` or printing secrets.
+   - **Read-Only Diagnostics**: `scripts/diagnose-hotkeys.mjs` inspects candidate userData folders (`Alt-T`, `TTime Lite`, `ttime-lite`) read-only via `fs.lstatSync` without stealing `SingletonLock` or printing secrets.
 
 ---
 

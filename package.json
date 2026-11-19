@@ -1,20 +1,20 @@
 {
-  "name": "flashprompt",
-  "productName": "FlashPrompt",
+  "name": "alt-t",
+  "productName": "Alt-T",
   "version": "0.1.0",
   "private": false,
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yeahyeahyeahyeahyeah0520/flashprompt.git"
+    "url": "git+https://github.com/yeahyeahyeahyeahyeah0520/alt-t.git"
   },
   "bugs": {
-    "url": "https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/issues"
+    "url": "https://github.com/yeahyeahyeahyeahyeah0520/alt-t/issues"
   },
-  "homepage": "https://github.com/yeahyeahyeahyeahyeah0520/flashprompt#readme",
+  "homepage": "https://github.com/yeahyeahyeahyeahyeah0520/alt-t#readme",
   "description": "Pure, lightweight floating prompt translator & one-key Enter-to-Terminal injector for AI coding CLIs (Claude Code, Codex, Antigravity, Terminal)",
   "keywords": [
-    "flashprompt",
+    "alt-t",
     "prompt-translator",
     "terminal",
     "cli",

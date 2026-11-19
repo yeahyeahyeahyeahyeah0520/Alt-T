@@ -1,25 +1,25 @@
-# FlashPrompt
+# Alt-T
 
 **[English](./README.md) | [简体中文](./README.zh-CN.md)**
 
 > A lightweight, hardened Windows desktop translator & **one-key `Enter`-to-Terminal prompt injector** built with Electron 45, Vue 3, `koffi` Win32 `SendInput`, and `undici` — crafted for AI coding CLIs (`Claude Code`, `Codex`, `Antigravity`, `Gemini CLI`, `PowerShell`, `SSH`) and everyday developer workflows.
 
-[![CI](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/ci.yml)
-[![Release](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/release.yml)
+[![CI](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/ci.yml)
+[![Release](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-4F46E5.svg)](./LICENSE)
 [![OS: Windows | macOS | Linux](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-0078D4.svg)](#cross-platform-support-matrix)
 [![Zero node-gyp](https://img.shields.io/badge/Native%20Deps-Zero%20node--gyp-success.svg)](#build--packaging)
 
 ---
 
-## Why FlashPrompt?
+## Why Alt-T?
 
 Typing non-ASCII / CJK prompts directly inside terminal TUIs (`Claude Code`, `Codex`, `Ink` / `Bubbletea` apps) often causes dropped keystrokes, frozen IME candidate windows, or accidental `^C` (`SIGINT`) session interruptions when traditional translation tools send `Ctrl+C` to unhighlighted terminals.
 
-**FlashPrompt solves this cleanly with zero screenshot/OCR bloat and zero `node-gyp` native builds:**
+**Alt-T solves this cleanly with zero screenshot/OCR bloat and zero `node-gyp` native builds:**
 
 > [!TIP]
-> **`Alt + T` One-Key Terminal Flow**: Press **`Alt + T`** inside any terminal or IDE → type smoothly in a cursor-anchored floating input bar → press **`Enter`** once → FlashPrompt translates your input into idiomatic technical English (preserving `--flags`, file paths, backticks, env vars, `/slash` commands, and `@mentions`), restores focus to your exact terminal window before hiding, and injects the text using the terminal's native paste chord (`Ctrl+Shift+V` / `Shift+Insert` / `Ctrl+V`) without polluting `Win + V` clipboard history.
+> **`Alt + T` One-Key Terminal Flow**: Press **`Alt + T`** inside any terminal or IDE → type smoothly in a cursor-anchored floating input bar → press **`Enter`** once → Alt-T translates your input into idiomatic technical English (preserving `--flags`, file paths, backticks, env vars, `/slash` commands, and `@mentions`), restores focus to your exact terminal window before hiding, and injects the text using the terminal's native paste chord (`Ctrl+Shift+V` / `Shift+Insert` / `Ctrl+V`) without polluting `Win + V` clipboard history.
 
 ---
 
@@ -63,7 +63,7 @@ Typing non-ASCII / CJK prompts directly inside terminal TUIs (`Claude Code`, `Co
 
 ### Terminal `Alt + R` Strategy: Option A (Default) vs. Option B
 - **Option A — Safe Popup Preview (`terminalAutoBackspace: false`, default)**:
-  When you highlight text inside a recognized terminal (`Windows Terminal`, `ConHost`, `PowerShell`, `WezTerm`, `Alacritty`, `Ghostty`, `Warp`, `Wave`, `PuTTY`, `Mintty`, `Xshell`, `MobaXterm`) and press `Alt + R`, FlashPrompt translates the text and opens a cursor popup (`directPaste: true`). Press **`Enter`** once to paste at your terminal cursor, or **`Esc`** to dismiss—never blindly backspacing your command line.
+  When you highlight text inside a recognized terminal (`Windows Terminal`, `ConHost`, `PowerShell`, `WezTerm`, `Alacritty`, `Ghostty`, `Warp`, `Wave`, `PuTTY`, `Mintty`, `Xshell`, `MobaXterm`) and press `Alt + R`, Alt-T translates the text and opens a cursor popup (`directPaste: true`). Press **`Enter`** once to paste at your terminal cursor, or **`Esc`** to dismiss—never blindly backspacing your command line.
 - **Option B — Auto-Backspace Replace (`terminalAutoBackspace: true` in Settings)**:
   For single-line terminal input right at the cursor end, enabling **"终端划选自动退格替换"** counts extended grapheme clusters via `Intl.Segmenter`, verifies the foreground HWND and Windows Terminal tab title (`GetWindowTextW`) haven't changed, physically releases modifiers, sends batched `VK_BACK` keystrokes (`20` per batch, `8ms` interval), and injects the translation via the terminal's paste chord (`Ctrl+Shift+V` or `Shift+Insert`). Multi-line selections always return `0` erase characters to prevent deleting prior shell lines.
 
@@ -73,7 +73,7 @@ Typing non-ASCII / CJK prompts directly inside terminal TUIs (`Claude Code`, `Co
 
 Windows **User Interface Privilege Isolation (UIPI)** blocks a standard-privilege process from sending `SendInput` keystrokes or inspecting process handles of an elevated (**Run as Administrator**) or System window.
 
-FlashPrompt queries `OpenProcessToken` + `GetTokenInformation(TokenIntegrityLevel = 25)` + `GetSidSubAuthority` before simulating input:
+Alt-T queries `OpenProcessToken` + `GetTokenInformation(TokenIntegrityLevel = 25)` + `GetSidSubAuthority` before simulating input:
 - **`Alt + R` / `Alt + E` on an elevated window**: Intercepts the boundary cleanly and notifies `未选中文本或目标窗口为高权限(UIPI)` without corrupting your clipboard.
 - **`Alt + T` / `Ctrl + Enter` paste targeting an elevated window**: Preserves the translated text on your clipboard (skipping clipboard restoration), focuses the target window, and prompts you to paste manually with `Ctrl+V` or `Shift+Insert`.
 
@@ -81,9 +81,9 @@ FlashPrompt queries `OpenProcessToken` + `GetTokenInformation(TokenIntegrityLeve
 
 ## Configuration & Local Loopback LLM Setup
 
-On first run, FlashPrompt initializes `config.json` in your user data directory (e.g., `%APPDATA%\FlashPrompt\config.json` in packaged builds, or refer to [`config.example.json`](./config.example.json) for the full schema).
+On first run, Alt-T initializes `config.json` in your user data directory (e.g., `%APPDATA%\Alt-T\config.json` in packaged builds, or refer to [`config.example.json`](./config.example.json) for the full schema).
 
-- **Encrypted API Key**: When you save an OpenAI API key in Settings, FlashPrompt encrypts it at rest via Electron DPAPI (`safeStorage`) into `openai.encryptedKey` and leaves `openai.apiKey` empty on disk.
+- **Encrypted API Key**: When you save an OpenAI API key in Settings, Alt-T encrypts it at rest via Electron DPAPI (`safeStorage`) into `openai.encryptedKey` and leaves `openai.apiKey` empty on disk.
 - **Local Loopback LLMs (Keyless)**: Endpoints targeting `http://localhost:<port>`, `http://127.0.0.1:<port>`, or `http://[::1]:<port>` (such as `Ollama`, `LM Studio`, `llama.cpp`, or `vLLM`) are permitted with an empty `apiKey`:
   ```json
   "openai": {
@@ -94,7 +94,7 @@ On first run, FlashPrompt initializes `config.json` in your user data directory 
   }
   ```
 - **Remote Endpoints**: Any non-loopback `baseUrl` with an empty `apiKey` fails fast locally with error code `CONFIG` (`OpenAI API key is empty`) without sending any network request.
-- **Clipboard Format Scope**: During selection capture and paste, FlashPrompt backs up and restores `text/plain`, `text/html`, `text/rtf`, and `image/*`. Non-text/image OS formats such as file drops (`CF_HDROP`) are not backed up.
+- **Clipboard Format Scope**: During selection capture and paste, Alt-T backs up and restores `text/plain`, `text/html`, `text/rtf`, and `image/*`. Non-text/image OS formats such as file drops (`CF_HDROP`) are not backed up.
 
 ---
 
@@ -128,7 +128,7 @@ wscript.exe //B //NoLogo watchdog.vbs
 | **Silent Startup / Auto-Launch** | ✅ `.lnk` / Login Item | ✅ `LoginItemSettings` | ✅ `~/.config/autostart` | ✅ `~/.config/autostart` |
 
 *\* macOS requires **Accessibility** permission for synthetic `Cmd+C` / `Cmd+V`.*  
-*\*\* Linux Wayland blocks cross-window keystroke injection by design; FlashPrompt safely copies translations to the clipboard and returns focus.*
+*\*\* Linux Wayland blocks cross-window keystroke injection by design; Alt-T safely copies translations to the clipboard and returns focus.*
 
 ---
 

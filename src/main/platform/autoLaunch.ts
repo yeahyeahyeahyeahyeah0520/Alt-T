@@ -3,9 +3,9 @@ import os from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { app, shell, type ShortcutDetails } from 'electron'
 
-const WIN_STARTUP_SHORTCUT = 'FlashPrompt.lnk'
+const WIN_STARTUP_SHORTCUT = 'Alt-T.lnk'
 const LEGACY_WATCHDOG_SHORTCUT = 'TTime Lite Watchdog.lnk'
-const LINUX_AUTOSTART_DESKTOP = 'flashprompt.desktop'
+const LINUX_AUTOSTART_DESKTOP = 'alt-t.desktop'
 
 export interface AutoLaunchDeps {
   platform: NodeJS.Platform
@@ -122,7 +122,7 @@ function syncLinuxAutoLaunch(enabled: boolean, deps: AutoLaunchDeps): boolean {
     '[Desktop Entry]',
     'Type=Application',
     'Version=1.0',
-    'Name=FlashPrompt',
+    'Name=Alt-T',
     'Comment=Instant native prompt translator and terminal injector',
     `Exec=${execCmd}`,
     'Terminal=false',
@@ -183,10 +183,10 @@ export function syncAutoLaunch(
           target: portableExe,
           args: '',
           cwd: dirname(portableExe),
-          description: 'FlashPrompt',
+          description: 'Alt-T',
           icon: portableExe,
           iconIndex: 0,
-          appUserModelId: 'com.flashprompt.app'
+          appUserModelId: 'com.alt-t.app'
         }
         if (shortcutAlreadyMatches(lnkPath, desired, deps)) {
           return true
@@ -209,19 +209,19 @@ export function syncAutoLaunch(
           target: join(deps.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'wscript.exe'),
           args: `//B //NoLogo "${vbsPath}"`,
           cwd: appDir,
-          description: 'FlashPrompt',
+          description: 'Alt-T',
           icon: electronExe,
           iconIndex: 0,
-          appUserModelId: 'com.flashprompt.app'
+          appUserModelId: 'com.alt-t.app'
         }
       : {
           target: electronExe,
           args: `"${appDir}"`,
           cwd: appDir,
-          description: 'FlashPrompt',
+          description: 'Alt-T',
           icon: electronExe,
           iconIndex: 0,
-          appUserModelId: 'com.flashprompt.app'
+          appUserModelId: 'com.alt-t.app'
         }
 
     if (shortcutAlreadyMatches(lnkPath, desired, deps)) {

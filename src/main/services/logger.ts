@@ -4,7 +4,7 @@ import * as electronNs from 'electron'
 import { redactSecretsInText } from '../core/redact'
 
 const DEFAULT_MAX_LOG_SIZE = 512 * 1024
-const LOG_FILE_NAME = 'flashprompt.log'
+const LOG_FILE_NAME = 'alt-t.log'
 
 export interface LoggerDeps {
   getLogDir: () => string | null

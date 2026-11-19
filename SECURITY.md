@@ -1,12 +1,12 @@
-# Security Policy — FlashPrompt
+# Security Policy — Alt-T
 
-FlashPrompt is a local-first Windows desktop utility that intercepts global hotkeys, inspects foreground window metadata, and communicates with translation endpoints. This document transparently describes our threat model, architectural trade-offs, compensating security controls, and vulnerability reporting process.
+Alt-T is a local-first Windows desktop utility that intercepts global hotkeys, inspects foreground window metadata, and communicates with translation endpoints. This document transparently describes our threat model, architectural trade-offs, compensating security controls, and vulnerability reporting process.
 
 ---
 
 ## 1. Transparent Trade-off: `RendererCodeIntegrity` Disabled
 
-In `src/main/index.ts`, FlashPrompt sets the Chromium command-line switch before `app.whenReady()`:
+In `src/main/index.ts`, Alt-T sets the Chromium command-line switch before `app.whenReady()`:
 
 ```ts
 app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity')
@@ -16,7 +16,7 @@ app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity')
 On Windows 10/11, third-party Chinese/CJK Input Method Editors (IMEs), accessibility utilities, screen readers, and endpoint security/antivirus software frequently inject helper DLLs into Chromium renderer processes. When Chromium's `RendererCodeIntegrity` mitigation is active, unsigned or third-party injected DLLs cause repeated renderer crashes (`STATUS_INVALID_IMAGE_HASH` / `0xc0000409`) whenever the floating popup gains focus for text input.
 
 ### Compensating Controls
-Because disabling `RendererCodeIntegrity` relaxes Chromium's renderer DLL signature enforcement, FlashPrompt enforces strict defense-in-depth across all renderer, IPC, network, and packaging boundaries:
+Because disabling `RendererCodeIntegrity` relaxes Chromium's renderer DLL signature enforcement, Alt-T enforces strict defense-in-depth across all renderer, IPC, network, and packaging boundaries:
 
 1. **Full Renderer Isolation (`popupWindow.ts`, `settingsWindow.ts`)**:
    - `contextIsolation: true`
@@ -62,7 +62,7 @@ Because disabling `RendererCodeIntegrity` relaxes Chromium's renderer DLL signat
   - When `safeStorage.isEncryptionAvailable()` is true (DPAPI on Windows), `openai.apiKey` is encrypted before writing to disk (`openai.encryptedKey`), and `openai.apiKey` is stored as `""`.
 - **End-to-End Redaction (`src/main/core/redact.ts`, `logger.ts`, `httpClient.ts`, `index.ts`)**:
   - `redactSecretsInText` and `redactUrlCredentials` strip `http(s)://user:pass@` proxy/URL credentials, `Authorization: Bearer ...` headers, `Bearer` tokens, `sk-...` / `sk-proj-...` / `AIza...` key patterns, and the currently loaded `apiKey`.
-  - All log lines (`flashprompt.log`), HTTP error snippets, and `uncaughtException` system notifications pass through redaction, with crash notifications rate-limited by a 60-second cooldown gate (`createCooldownGate(60_000)`).
+  - All log lines (`alt-t.log`), HTTP error snippets, and `uncaughtException` system notifications pass through redaction, with crash notifications rate-limited by a 60-second cooldown gate (`createCooldownGate(60_000)`).
   - Source/translated text previews in logs are truncated to 40 characters (`truncatePreview(text, 40)`).
 
 ---
@@ -95,12 +95,12 @@ Because disabling `RendererCodeIntegrity` relaxes Chromium's renderer DLL signat
 | Latest release / `main` | ✅ Yes |
 | Older snapshots | ❌ Please upgrade to the latest release |
 
-If you discover a security vulnerability in **FlashPrompt**:
+If you discover a security vulnerability in **Alt-T**:
 
 1. **Do NOT open a public GitHub issue** with exploit details, credentials, or personal paths.
-2. Report privately via **GitHub Security Advisories** (`https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/security/advisories/new`).
+2. Report privately via **GitHub Security Advisories** (`https://github.com/yeahyeahyeahyeahyeah0520/alt-t/security/advisories/new`).
 3. Please include:
-   - Affected file(s) / component(s) and FlashPrompt version
+   - Affected file(s) / component(s) and Alt-T version
    - Step-by-step reproduction instructions
    - Impact assessment (e.g., privilege escalation, IPC bypass, secret disclosure)
 4. We aim to acknowledge reports within 72 hours and coordinate a fix before public disclosure.

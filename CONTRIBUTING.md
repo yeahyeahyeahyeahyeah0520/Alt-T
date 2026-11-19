@@ -1,6 +1,6 @@
-# Contributing to FlashPrompt
+# Contributing to Alt-T
 
-Thank you for your interest in contributing to **FlashPrompt** (`https://github.com/yeahyeahyeahyeahyeah0520/flashprompt`)!
+Thank you for your interest in contributing to **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/alt-t`)!
 
 ---
 
@@ -16,8 +16,8 @@ Thank you for your interest in contributing to **FlashPrompt** (`https://github.
 ## 2. Local Setup
 
 ```powershell
-git clone https://github.com/yeahyeahyeahyeahyeah0520/flashprompt.git
-cd flashprompt
+git clone https://github.com/yeahyeahyeahyeahyeah0520/alt-t.git
+cd alt-t
 npm install
 ```
 
@@ -32,7 +32,7 @@ Useful development commands:
 ## 3. Running Verification Safely (`FP_SMOKE=1`)
 
 > [!IMPORTANT]
-> Always set `FP_SMOKE=1` (or `TTL_SMOKE=1`) when running `npm run verify` or `npm run smoke` on a machine that may already have a live FlashPrompt instance running. Smoke mode redirects `userData` to `os.tmpdir()` and skips tray creation, single-instance lock acquisition, and global hotkey registration.
+> Always set `FP_SMOKE=1` (or `TTL_SMOKE=1`) when running `npm run verify` or `npm run smoke` on a machine that may already have a live Alt-T instance running. Smoke mode redirects `userData` to `os.tmpdir()` and skips tray creation, single-instance lock acquisition, and global hotkey registration.
 
 ```powershell
 # PowerShell

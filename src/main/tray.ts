@@ -105,7 +105,7 @@ export function createAppIcon(): Electron.NativeImage {
 export function createTray(deps: TrayDeps): TrayController {
   const icon = createAppIcon()
   const tray = new Tray(icon)
-  tray.setToolTip('FlashPrompt')
+  tray.setToolTip('Alt-T')
 
   function buildContextMenu(): Menu {
     const cfg = deps.getConfig()

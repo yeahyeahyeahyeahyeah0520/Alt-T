@@ -23,7 +23,7 @@ export function openSettingsWindow(): BrowserWindow {
     minimizable: false,
     maximizable: false,
     frame: true,
-    title: 'FlashPrompt 设置',
+    title: 'Alt-T 设置',
     icon: createAppIcon(),
     backgroundColor,
     webPreferences: {

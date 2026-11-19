@@ -1,6 +1,6 @@
-# Architecture Overview — FlashPrompt
+# Architecture Overview — Alt-T
 
-FlashPrompt is structured around a strict unidirectional layered architecture (`L0`–`L5`, `Preload`, and `Renderer`) enforced automatically by [`scripts/check-rules.mjs`](./scripts/check-rules.mjs). Pure domain logic (`L0` + `L1`) has zero Electron, `koffi`, or `undici` imports so unit and fault-injection tests execute directly in Node.js via `tsx`, while OS integration (`L3`) and services (`L4`) expose dependency-injection seams (`set*ForTest`) for deterministic testing.
+Alt-T is structured around a strict unidirectional layered architecture (`L0`–`L5`, `Preload`, and `Renderer`) enforced automatically by [`scripts/check-rules.mjs`](./scripts/check-rules.mjs). Pure domain logic (`L0` + `L1`) has zero Electron, `koffi`, or `undici` imports so unit and fault-injection tests execute directly in Node.js via `tsx`, while OS integration (`L3`) and services (`L4`) expose dependency-injection seams (`set*ForTest`) for deterministic testing.
 
 ---
 

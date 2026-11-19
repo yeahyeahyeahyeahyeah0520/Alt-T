@@ -382,7 +382,7 @@ onUnmounted(() => {
   <div class="popup-root">
     <header class="topbar">
       <span class="title">
-        {{ uiState.directPasteMode ? 'FlashPrompt · 回车直填' : 'FlashPrompt' }}
+        {{ uiState.directPasteMode ? 'Alt-T · 回车直填' : 'Alt-T' }}
       </span>
       <div class="topbar-actions">
         <button

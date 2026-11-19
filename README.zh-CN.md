@@ -1,22 +1,22 @@
-# FlashPrompt
+# Alt-T
 
 **[English](./README.md) | [简体中文](./README.zh-CN.md)**
 
 > 轻量、经工程级加固的 Windows 桌面悬浮翻译与 **单键 `Enter` 终端提示词直填工具** —— 基于 Electron 45、Vue 3、`koffi` Win32 `SendInput` 与 `undici` 构建，专为 `Claude Code`、`Codex`、`Antigravity`、`Gemini CLI`、`PowerShell`、`SSH` 等开发者命令行工作流打造。
 
-[![CI](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/ci.yml)
-[![Release](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/release.yml)
+[![CI](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/ci.yml)
+[![Release](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-4F46E5.svg)](./LICENSE)
 [![OS: Windows | macOS | Linux](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-0078D4.svg)](#跨操作系统支持矩阵)
 [![Zero node-gyp](https://img.shields.io/badge/Native%20Deps-Zero%20node--gyp-success.svg)](#构建与打包)
 
 ---
 
-## 为什么选择 FlashPrompt？
+## 为什么选择 Alt-T？
 
 在现代终端 TUI（如 `Claude Code`、`Codex`、`Ink` / `Bubbletea` 交互界面）中直接使用中文输入法，经常会遇到**丢字、候选框卡顿、光标错位**；而传统划词翻译工具在终端内按替换热键时发送 `Ctrl+C`，往往直接变成 **`^C` (`SIGINT`) 杀掉正在运行的会话**。
 
-**FlashPrompt 砍掉了冗余的截图 OCR 与重型依赖（零 `node-gyp` 编译），只把高频翻译与终端上屏做到极致：**
+**Alt-T 砍掉了冗余的截图 OCR 与重型依赖（零 `node-gyp` 编译），只把高频翻译与终端上屏做到极致：**
 
 > [!TIP]
 > **`Alt + T` 单键极速直填流**：在任意终端或 IDE 中按下 **`Alt + T`** → 在光标旁轻量浮窗中流畅输入中文 → **敲一下 `Enter` 回车** → 自动译成地道技术英文（原样保留 `--flags`、文件路径、反引号代码块、环境变量、`/slash` 指令与 `@mentions`），隐藏浮窗前先将焦点切回原终端并校验句柄，按终端原生协议（`Ctrl+Shift+V` / `Shift+Insert` / `Ctrl+V`）精准粘贴，且**零 `Win + V` 剪贴板历史污染**！
@@ -63,7 +63,7 @@
 
 ### 终端划选 `Alt + R` 策略：Option A（默认）与 Option B
 - **Option A — 安全浮窗模式（`terminalAutoBackspace: false`，默认开启）**：
-  在已识别的终端（`Windows Terminal`、`ConHost`、`PowerShell`、`WezTerm`、`Alacritty`、`Ghostty`、`Warp`、`Wave`、`PuTTY`、`Mintty`、`Xshell`、`MobaXterm`）中划选文本并按 `Alt + R`，FlashPrompt 会安全弹出译文预览框（`directPaste: true`）。按一下 **`Enter`** 即可在光标处粘贴译文，按 **`Esc`** 关闭——绝不会盲目发送退格键误删命令行。
+  在已识别的终端（`Windows Terminal`、`ConHost`、`PowerShell`、`WezTerm`、`Alacritty`、`Ghostty`、`Warp`、`Wave`、`PuTTY`、`Mintty`、`Xshell`、`MobaXterm`）中划选文本并按 `Alt + R`，Alt-T 会安全弹出译文预览框（`directPaste: true`）。按一下 **`Enter`** 即可在光标处粘贴译文，按 **`Esc`** 关闭——绝不会盲目发送退格键误删命令行。
 - **Option B — 终端划选自动退格替换（在设置页勾选“终端划选自动退格替换”）**：
   适合单行命令行末尾的直接替换。开启后，程序使用 `Intl.Segmenter` 按扩展字形簇（grapheme cluster）精确计数，校验前台 HWND 与 Windows Terminal 标签页标题（`GetWindowTextW`）未变化后，先物理释放修饰键，再分批发送 `VK_BACK`（每批 `20` 个，间隔 `8ms`），最后按终端粘贴快捷键（`Ctrl+Shift+V` 或 `Shift+Insert`）粘贴译文。多行选区会自动返回 `0` 退格数以避免误删历史命令。
 
@@ -73,7 +73,7 @@
 
 Windows **用户界面特权隔离（UIPI）** 机制禁止普通权限进程向管理员权限（**以管理员身份运行**）或系统权限窗口注入 `SendInput` 按键。
 
-FlashPrompt 通过 `OpenProcessToken` + `GetTokenInformation(TokenIntegrityLevel = 25)` + `GetSidSubAuthority` 在操作前主动检测权限边界：
+Alt-T 通过 `OpenProcessToken` + `GetTokenInformation(TokenIntegrityLevel = 25)` + `GetSidSubAuthority` 在操作前主动检测权限边界：
 - **对高权限窗口按 `Alt + R` / `Alt + E`**：立即拦截并提示 `未选中文本或目标窗口为高权限(UIPI)`，不会破坏原剪贴板内容。
 - **向高权限窗口执行 `Alt + T` / `Ctrl + Enter` 粘贴**：自动跳过剪贴板还原，将译文保留在剪贴板并切回目标窗口，同时提示用户手动按 `Ctrl+V` 或 `Shift+Insert` 粘贴。
 
@@ -81,7 +81,7 @@ FlashPrompt 通过 `OpenProcessToken` + `GetTokenInformation(TokenIntegrityLevel
 
 ## 配置文件与本地回环大模型（Ollama 等）
 
-首次运行会在用户数据目录生成 `config.json`（打包版本位于 `%APPDATA%\FlashPrompt\config.json`），完整字段结构可参考 [`config.example.json`](./config.example.json)。
+首次运行会在用户数据目录生成 `config.json`（打包版本位于 `%APPDATA%\Alt-T\config.json`），完整字段结构可参考 [`config.example.json`](./config.example.json)。
 
 - **密钥加密存储**：在设置页保存 OpenAI API Key 时，会通过 Windows DPAPI（`safeStorage`）加密写入 `openai.encryptedKey`，磁盘上的 `openai.apiKey` 保持为空。
 - **本地回环大模型（免 API Key）**：当 `openai.baseUrl` 指向 `http://localhost:<port>`、`http://127.0.0.1:<port>` 或 `http://[::1]:<port>`（如 `Ollama`、`LM Studio`、`llama.cpp`、`vLLM`）时，允许 `apiKey` 留空直接请求：

@@ -109,7 +109,7 @@ function sdFGlyph(u, v) {
 /**
  * Render an anti-aliased RGBA icon buffer of `size x size` using 4x4 supersampling.
  */
-function renderFlashPromptIcon(size) {
+function renderAlt-TIcon(size) {
   const rgba = Buffer.alloc(size * size * 4)
   const samples = 4
   const invSamples = 1 / (samples * samples)
@@ -219,12 +219,12 @@ function main() {
 
   const pngBySize = new Map()
   for (const size of ICO_SIZES) {
-    const rgba = renderFlashPromptIcon(size)
+    const rgba = renderAlt-TIcon(size)
     pngBySize.set(size, encodePngRgba(size, size, rgba))
   }
 
   // Generate 512x512 master PNG for build/icon.png
-  const masterPng = encodePngRgba(512, 512, renderFlashPromptIcon(512))
+  const masterPng = encodePngRgba(512, 512, renderAlt-TIcon(512))
   fs.writeFileSync(path.join(BUILD_DIR, 'icon.png'), masterPng)
 
   // Generate explicit helper PNG sizes

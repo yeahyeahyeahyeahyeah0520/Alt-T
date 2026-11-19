@@ -120,7 +120,7 @@ let activeReplaceController: AbortController | null = null
 
 function defaultShowSystemNotification(body: string): void {
   if (Notification.isSupported()) {
-    new Notification({ title: 'FlashPrompt', body }).show()
+    new Notification({ title: 'Alt-T', body }).show()
   } else {
     logInfo(`notification (unsupported): ${body}`)
   }
@@ -419,7 +419,7 @@ export async function runSelectionFlow(
       const errMsg = err instanceof Error ? err.message : String(err)
       rt.notifySystem(
         errMsg === 'MACOS_ACCESSIBILITY_DENIED'
-          ? '请在系统设置 → 辅助功能 中授权 FlashPrompt'
+          ? '请在系统设置 → 辅助功能 中授权 Alt-T'
           : '发送复制快捷键失败'
       )
       logError('dispatchCopyShortcut failed', err)

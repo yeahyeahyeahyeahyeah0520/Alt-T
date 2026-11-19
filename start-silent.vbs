@@ -7,12 +7,12 @@ electronExe = rootDir & "\node_modules\electron\dist\electron.exe"
 mainBundle = rootDir & "\out\main\index.js"
 
 If Not fso.FileExists(electronExe) Then
-    MsgBox "Electron binary not found:" & vbCrLf & electronExe & vbCrLf & vbCrLf & "Please run: npm install", vbExclamation, "FlashPrompt"
+    MsgBox "Electron binary not found:" & vbCrLf & electronExe & vbCrLf & vbCrLf & "Please run: npm install", vbExclamation, "Alt-T"
     WScript.Quit 1
 End If
 
 If Not fso.FileExists(mainBundle) Then
-    MsgBox "Build output not found:" & vbCrLf & mainBundle & vbCrLf & vbCrLf & "Please run: npm run build", vbExclamation, "FlashPrompt"
+    MsgBox "Build output not found:" & vbCrLf & mainBundle & vbCrLf & vbCrLf & "Please run: npm run build", vbExclamation, "Alt-T"
     WScript.Quit 1
 End If
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * FlashPrompt Safe Environment & Hotkey Diagnostics
+ * Alt-T Safe Environment & Hotkey Diagnostics
  * Usage:
  *   node scripts/diagnose-hotkeys.mjs                 (Safe read-only runtime check)
  *   node scripts/diagnose-hotkeys.mjs --probe-hotkeys (Temporarily probes global shortcuts when no live instance is running)
@@ -116,12 +116,12 @@ if (!isElectronRuntime) {
   }
 
   app.whenReady().then(() => {
-    console.log('[fp] === FlashPrompt Diagnostics ===')
+    console.log('[fp] === Alt-T Diagnostics ===')
     console.log(
       `[fp] Platform: ${os.platform()} ${os.arch()} | Electron: ${process.versions.electron} | Node: ${process.versions.node}`
     )
 
-    const userDataCandidates = ['FlashPrompt', 'TTime Lite', 'ttime-lite']
+    const userDataCandidates = ['Alt-T', 'TTime Lite', 'ttime-lite']
     let detectedLocks = 0
     let loadedHotkeys = null
 
