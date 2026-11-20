@@ -302,7 +302,7 @@ describe('IDE integrated terminal safety (Windows UIA probe + forcePopupOnReplac
       isIdeTerminalUiaNode({
         pid: 100,
         controlType: 50004,
-        name: 'terminal.ts - flashprompt - Visual Studio Code',
+        name: 'terminal.ts - Alt-T - Visual Studio Code',
         automationId: 'workbench.parts.editor',
         className: 'inputarea'
       }),

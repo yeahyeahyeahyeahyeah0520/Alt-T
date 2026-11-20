@@ -14,7 +14,7 @@
 
 ## 下载与快速安装
 
-前往 [**GitHub 最新发行版页面**](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/releases/latest) 直接下载 Windows 预构建二进制：
+前往 [**GitHub 最新发行版页面**](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/releases/latest) 直接下载 Windows 预构建二进制：
 - **`Alt-T-<version>-setup.exe`** — 标准 NSIS 安装包（支持自定义目录、开始菜单快捷方式与开机自启）。
 - **`Alt-T-<version>-portable.exe`** — 单文件绿色便携版（免安装直接运行）。
 

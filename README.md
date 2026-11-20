@@ -14,7 +14,7 @@
 
 ## Download & Quick Install
 
-Download prebuilt Windows binaries from the [**Latest GitHub Release**](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/releases/latest):
+Download prebuilt Windows binaries from the [**Latest GitHub Release**](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/releases/latest):
 - **`Alt-T-<version>-setup.exe`** — Standard NSIS installer (custom install directory, Start Menu shortcut, optional Startup launch).
 - **`Alt-T-<version>-portable.exe`** — Single-file portable executable (no installation required).
 
