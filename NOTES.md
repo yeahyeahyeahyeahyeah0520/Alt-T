@@ -1,13 +1,13 @@
 # Engineering Notes & Evolution Log (`NOTES.md`)
 
-This document records verified runtime observations, architectural deviations from the original `SPEC.md`, and hardening enhancements implemented for the public open-source release of **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/flashprompt`).
+This document records verified runtime observations, architectural deviations from the original `SPEC.md`, and hardening enhancements implemented for the public open-source release of **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/Alt-T`).
 
 ---
 
 ## 1. Branding & Lineage: Clean-Room Decoupling to Alt-T
 
 1. **Initial Private Specification (`SPEC.md`)**: Originally drafted as an internal specification referencing an earlier tool.
-2. **Clean-Room Open-Source Implementation**: Built clean-room from scratch and unified publicly under **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/flashprompt`, MIT license, `AppUserModelId = 'com.alt-t.app'`), with legacy migration shims (`TTL_SMOKE`, `TTime Lite` watchdog paths, `ocr-translate`) subsequently pruned for simplicity.
+2. **Clean-Room Open-Source Implementation**: Built clean-room from scratch and unified publicly under **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/Alt-T`, MIT license, `AppUserModelId = 'com.alt-t.app'`), with legacy migration shims (`TTL_SMOKE`, `TTime Lite` watchdog paths, `ocr-translate`) subsequently pruned for simplicity.
 3. **Read-Only Diagnostics**: `scripts/diagnose-hotkeys.mjs` inspects the `Alt-T` userData folder read-only via `fs.lstatSync` without stealing `SingletonLock` or printing secrets.
 
 ---

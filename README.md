@@ -4,8 +4,8 @@
 
 > A lightweight, hardened Windows desktop translator & **one-key `Enter`-to-Terminal prompt injector** built with Electron 45, Vue 3, `koffi` Win32 `SendInput`, and `undici` — crafted for AI coding CLIs (`Claude Code`, `Codex`, `Antigravity`, `Gemini CLI`, `PowerShell`, `SSH`) and everyday developer workflows.
 
-[![CI](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/ci.yml)
-[![Release](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/release.yml)
+[![CI](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/ci.yml)
+[![Release](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-4F46E5.svg)](./LICENSE)
 [![OS: Windows | macOS | Linux](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-0078D4.svg)](#cross-platform-support-matrix)
 [![Zero node-gyp](https://img.shields.io/badge/Native%20Deps-Zero%20node--gyp-success.svg)](#build--packaging)

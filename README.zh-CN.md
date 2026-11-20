@@ -4,8 +4,8 @@
 
 > 轻量、经工程级加固的 Windows 桌面悬浮翻译与 **单键 `Enter` 终端提示词直填工具** —— 基于 Electron 45、Vue 3、`koffi` Win32 `SendInput` 与 `undici` 构建，专为 `Claude Code`、`Codex`、`Antigravity`、`Gemini CLI`、`PowerShell`、`SSH` 等开发者命令行工作流打造。
 
-[![CI](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/ci.yml)
-[![Release](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/release.yml)
+[![CI](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/ci.yml)
+[![Release](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-4F46E5.svg)](./LICENSE)
 [![OS: Windows | macOS | Linux](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-0078D4.svg)](#跨操作系统支持矩阵)
 [![Zero node-gyp](https://img.shields.io/badge/Native%20Deps-Zero%20node--gyp-success.svg)](#构建与打包)

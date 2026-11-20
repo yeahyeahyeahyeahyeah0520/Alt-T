@@ -1,6 +1,6 @@
 # Contributing to Alt-T
 
-Thank you for your interest in contributing to **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/flashprompt`)!
+Thank you for your interest in contributing to **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/Alt-T`)!
 
 ---
 
@@ -16,8 +16,8 @@ Thank you for your interest in contributing to **Alt-T** (`https://github.com/ye
 ## 2. Local Setup
 
 ```powershell
-git clone https://github.com/yeahyeahyeahyeahyeah0520/flashprompt.git
-cd flashprompt
+git clone https://github.com/yeahyeahyeahyeahyeah0520/Alt-T.git
+cd Alt-T
 npm install
 ```
 
