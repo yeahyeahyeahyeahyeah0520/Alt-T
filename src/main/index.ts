@@ -20,7 +20,7 @@ const PRODUCTION_CSP =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'"
 
 function main(): void {
-  const SMOKE = process.env['FP_SMOKE'] === '1'
+  const SMOKE = process.env['ALT_T_SMOKE'] === '1' || process.env['FP_SMOKE'] === '1'
   const errorNotifyCooldown = createCooldownGate(60_000)
 
   setRedactedSecretProvider(() => {
@@ -60,6 +60,7 @@ function main(): void {
 
   app.commandLine.appendSwitch('wm-window-animations-disabled')
   app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity')
+  app.commandLine.appendSwitch('js-flags', '--max-old-space-size=128')
   app.disableHardwareAcceleration()
 
   if (SMOKE) {

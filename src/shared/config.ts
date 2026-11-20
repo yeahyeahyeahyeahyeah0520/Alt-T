@@ -100,7 +100,49 @@ export function restoreDefaultPrompts(currentPrompts?: PromptTemplate[]): Prompt
   return [...defaults, ...customPrompts]
 }
 
-function mergeOpenAI(raw: unknown): OpenAIProviderConfig {
+export interface OpenAIProviderPreset {
+  id: string
+  label: string
+  baseUrl: string
+  model: string
+  keylessLoopback?: boolean
+}
+
+export const OPENAI_PROVIDER_PRESETS: ReadonlyArray<OpenAIProviderPreset> = [
+  {
+    id: 'ollama',
+    label: '本地 Ollama（免 API Key）',
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    model: 'qwen2.5:7b',
+    keylessLoopback: true
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat'
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI 官方',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini'
+  },
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'openai/gpt-4o-mini'
+  },
+  {
+    id: 'siliconflow',
+    label: '硅基流动 (SiliconFlow)',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Qwen/Qwen2.5-7B-Instruct'
+  }
+]
+
+export function mergeOpenAI(raw: unknown): OpenAIProviderConfig {
   const def = DEFAULT_CONFIG.openai
   if (!isRecord(raw)) {
     return {
@@ -129,7 +171,7 @@ function mergeOpenAI(raw: unknown): OpenAIProviderConfig {
   }
 }
 
-function mergeProxy(raw: unknown): ProxyConfig {
+export function mergeProxy(raw: unknown): ProxyConfig {
   const def = DEFAULT_CONFIG.proxy
   if (!isRecord(raw)) return { ...def }
   return {
@@ -380,6 +422,7 @@ export function mergeConfig(raw: unknown): AppConfig {
       proxy: { ...DEFAULT_CONFIG.proxy },
       customWtExeNames: [],
       customConhostExeNames: [],
+      forcePopupOnReplaceExes: [],
       history: []
     }
   }
@@ -420,6 +463,7 @@ export function mergeConfig(raw: unknown): AppConfig {
         : DEFAULT_CONFIG.popupHeight,
     customWtExeNames: mergeExeNameList(raw.customWtExeNames),
     customConhostExeNames: mergeExeNameList(raw.customConhostExeNames),
+    forcePopupOnReplaceExes: mergeExeNameList(raw.forcePopupOnReplaceExes),
     history: mergeHistory(raw.history, historyLimit)
   }
 }

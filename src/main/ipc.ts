@@ -19,6 +19,7 @@ import {
   type HotkeyConfig,
   type PopupPasteReply,
   type ProviderId,
+  type ProviderTestReply,
   type TargetLang,
   type TranslateChunkPush,
   type TranslateDonePush,
@@ -27,6 +28,7 @@ import {
   type TranslateStartArgs,
   type TranslateStartReply
 } from '../shared/types'
+import { testProviderDraft } from './providers/providerTest'
 import type { TranslateService } from './services/translateService'
 import type { PopupWindowController } from './windows/popupWindow'
 
@@ -171,6 +173,7 @@ export function registerIpc(deps: IpcDeps): void {
     IPC_CHANNELS.clipboardWrite,
     IPC_CHANNELS.historyClear,
     IPC_CHANNELS.hotkeyCheck,
+    IPC_CHANNELS.providerTest,
     IPC_CHANNELS.settingsOpen
   ]
   for (const ch of allInvokeChannels) {
@@ -273,6 +276,14 @@ export function registerIpc(deps: IpcDeps): void {
     }
     return deps.hotkeyService.checkHotkey(raw.accelerator)
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.providerTest,
+    async (event, raw: unknown): Promise<ProviderTestReply> => {
+      assertTrustedSender(event, IPC_CHANNELS.providerTest)
+      return await testProviderDraft(raw)
+    }
+  )
 
   ipcMain.handle(IPC_CHANNELS.settingsOpen, (event) => {
     assertTrustedSender(event, IPC_CHANNELS.settingsOpen)

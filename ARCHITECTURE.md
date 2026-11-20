@@ -227,7 +227,7 @@ stateDiagram-v2
 flowchart TD
     START(["Windows Startup .lnk or Manual Launch"]) --> VBS_TYPE{"Launcher"}
 
-    VBS_TYPE -- "start-silent.vbs" --> STRIP1["Pure ASCII No-BOM VBS<br/>Strip ELECTRON_RUN_AS_NODE / FP_SMOKE<br/>Verify electron.exe & out\\main\\index.js"]
+    VBS_TYPE -- "start-silent.vbs" --> STRIP1["Pure ASCII No-BOM VBS<br/>Strip ELECTRON_RUN_AS_NODE / ALT_T_SMOKE / FP_SMOKE<br/>Verify electron.exe & out\\main\\index.js"]
     STRIP1 --> RUN_ONCE["shell.Run(&quot;electron.exe .&quot;, 0, False)"]
 
     VBS_TYPE -- "watchdog.vbs" --> STRIP2["Pure ASCII No-BOM VBS<br/>Strip env vars & verify binaries"]

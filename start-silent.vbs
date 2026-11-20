@@ -19,6 +19,7 @@ End If
 Set shell = CreateObject("WScript.Shell")
 On Error Resume Next
 shell.Environment("PROCESS").Remove "ELECTRON_RUN_AS_NODE"
+shell.Environment("PROCESS").Remove "ALT_T_SMOKE"
 shell.Environment("PROCESS").Remove "FP_SMOKE"
 On Error GoTo 0
 shell.CurrentDirectory = rootDir

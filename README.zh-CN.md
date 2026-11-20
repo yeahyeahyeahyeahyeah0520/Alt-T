@@ -12,6 +12,20 @@
 
 ---
 
+## 下载与快速安装
+
+前往 [**GitHub 最新发行版页面**](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/releases/latest) 直接下载 Windows 预构建二进制：
+- **`Alt-T-<version>-setup.exe`** — 标准 NSIS 安装包（支持自定义目录、开始菜单快捷方式与开机自启）。
+- **`Alt-T-<version>-portable.exe`** — 单文件绿色便携版（免安装直接运行）。
+
+> [!NOTE]
+> **Windows SmartScreen（智能筛选器）首次运行提示**：由于开源社区版本暂未购买商业代码签名证书，首次运行可能弹出“Windows 已保护你的电脑”。建议先按下方命令核对发行版附带的 `SHA256SUMS.txt` 校验和，确认一致后点击 **更多信息 → 仍要运行**：
+> ```powershell
+> Get-FileHash .\Alt-T-0.1.0-setup.exe -Algorithm SHA256
+> ```
+
+---
+
 ## 为什么选择 Alt-T？
 
 在现代终端 TUI（如 `Claude Code`、`Codex`、`Ink` / `Bubbletea` 交互界面）中直接使用中文输入法，经常会遇到**丢字、候选框卡顿、光标错位**；而传统划词翻译工具在终端内按替换热键时发送 `Ctrl+C`，往往直接变成 **`^C` (`SIGINT`) 杀掉正在运行的会话**。
@@ -30,7 +44,7 @@
   - **普通 GUI 软件**：自动判断中英方向（`zh-Hans` ↔ `en`）并原地替换选中文本。
   - **终端窗口（默认 Option A + 可选 Option B）**：按 Win32 窗口类名优先识别（`CASCADIA_HOSTING_WINDOW_CLASS`、`ConsoleWindowClass`、`mintty`、`VirtualConsoleClass`）并结合进程名（`wt.exe`、`wezterm-gui.exe`、`alacritty.exe`、`ghostty.exe`、`warp.exe`、`waveterm.exe`、`putty.exe`、`kitty.exe`、`xshell.exe`、`mobaxterm.exe`），确保**绝不误发 `^C`**。详见[终端与 IDE 内置终端使用指引](#终端与-ide-内置终端使用指引)。
 - **🔍 划词流式翻译（`Alt + E`）**：选中终端报错或技术文档，在光标旁实时流式展示译文，不修改原窗口（流式与非流式均接入 `AbortController` 取消链路）。
-- **🔌 免配置双引擎 + 自动回退**：开箱即用 **Edge 免费直连**（`edge`），支持任意 **OpenAI 兼容接口**（`OpenAI`、`DeepSeek`、`Gemini`、`GLM`、`Qwen` 或本地无密钥回环大模型），主备自动回退（`enableFallback`）。
+- **🔌 免配置双引擎、Edge 双路径容灾与一键测速**：开箱即用 **Edge 免费直连**（`edge`，内置 `translatetext` → `auth` 令牌认知接口二级容灾），支持任意 **OpenAI 兼容接口**（内置 `Ollama`、`DeepSeek`、`OpenAI`、`OpenRouter`、`硅基流动` 快速预设与无副作用「测试连接」按钮），主备自动回退（`enableFallback`）。
 - **🧱 防提示词注入开发者模板**：内置 `translate`（通用与技术翻译）与 `cli-prompt`（CLI 提示词精炼）模板，严格将用户输入视作待翻译纯文本，拒绝执行输入中的指令，原样保留代码块、CLI 参数、路径与变量名。
 - **🔒 系统级安全与隐私加固**：
   - **隔离 `Win + V` 剪贴板历史**：内部瞬时写入通过单次 `ClipboardItem` 附加 `ExcludeClipboardContentFromMonitorProcessing`、`CanIncludeInClipboardHistory` 与 `CanUploadToCloudClipboard`（全零 DWORD 标记）。
@@ -55,11 +69,14 @@
 
 ## 终端与 IDE 内置终端使用指引
 
-### IDE 内置终端（`VS Code` / `Cursor` / `Antigravity`）
+### IDE 内置终端（`VS Code` / `Cursor` / `Windsurf` / `Antigravity`）
 > [!IMPORTANT]
-> **在 VS Code、Cursor 或 Antigravity 的内置终端中，强烈建议直接使用 `Alt + T`（极速译入终端/窗口）。**
+> **在 VS Code、Cursor、Windsurf 或 Antigravity 的内置终端中，强烈建议直接使用 `Alt + T`（极速译入终端/窗口）。**
 >
-> `Code.exe` 在窗口分类中故意保持为 `'normal'`（普通桌面窗口），以确保你在代码编辑区划词时依然能正常使用 `Ctrl+C` / `Ctrl+V`。由于 Win32 句柄无法单独区分“IDE 编辑器区域”和“IDE 内置终端面板”，在内置终端中使用 `Alt + T` 是最可靠、零 `^C` 风险的交互方式。
+> `Code.exe` 在普通编辑区保持为 `'normal'`（常规窗口）以确保划词仍可正常使用 `Ctrl+C` / `Ctrl+V`。为防止在内置终端误发 `^C`（`SIGINT`），Alt-T 提供三层组合防护：
+> 1. **Windows 界面自动化（`UI Automation`）自动探测**：当目标进程属于已知 Electron 编辑器（`code.exe`、`cursor.exe`、`windsurf.exe`、`antigravity.exe`、`vscodium.exe`、`trae.exe`）时，程序会执行带 30 ms 超时保护的焦点节点探测——命中内置终端面板（`xterm` / 终端）时自动升级为 `'wt'`（改用 `Ctrl+Shift+C` 与安全浮窗预览）。
+> 2. **零 `Ctrl+C` 强制浮窗名单（`forcePopupOnReplaceExes`）**：如果编辑器关闭了无障碍树，可在设置页「防误触强制浮窗」中填入 `code.exe` 等进程名——对这些进程按 `Alt + R` 将彻底跳过 `Ctrl+C`，直接切换为 `Alt + T` 独立输入条。
+> 3. **极速直填工作流（`Alt + T`）**：全程不向目标窗口发送复制键，天然零 `^C` 风险。
 
 ### 终端划选 `Alt + R` 策略：Option A（默认）与 Option B
 - **Option A — 安全浮窗模式（`terminalAutoBackspace: false`，默认开启）**：
@@ -94,14 +111,15 @@ Alt-T 通过 `OpenProcessToken` + `GetTokenInformation(TokenIntegrityLevel = 25)
   }
   ```
 - **远端接口拦截**：非回环地址若 `apiKey` 为空，会在本地直接抛出 `CONFIG` 错误（`OpenAI API key is empty`），不会向外网发起无效请求。
-- **自定义终端白名单**：可在设置页直接配置（或编辑 `config.json` 中的 `customWtExeNames` / `customConhostExeNames`），为第三方终端指定 `Ctrl+Shift+V` 或 `Shift+Insert` 热键协议，修改即刻生效。
+- **自定义终端与防误触名单**：可在设置页直接配置（或编辑 `config.json` 中的 `customWtExeNames`、`customConhostExeNames` 与 `forcePopupOnReplaceExes`），为第三方终端指定热键协议或为编辑器开启零 `Ctrl+C` 防护，修改即刻生效。
+- **常用服务商预设与无副作用测速**：设置页支持一键填入 `Ollama` / `DeepSeek` / `OpenAI` / `OpenRouter` / `硅基流动` 预设，并可在保存前直接点击「测试连接」验证未保存草稿的连通性与延迟（不写历史、不覆盖磁盘配置）。
 - **剪贴板备份范围**：取词/替换期间仅备份与恢复 `text/plain`、`text/html`、`text/rtf` 与位图 `image/*`；文件列表（`CF_HDROP`）等非文本/图片格式不在备份范围内。
 
 ---
 
 ## 静默启动与 7×24 看门狗（Windows）
 
-仓库根目录的 `.vbs` 脚本均采用纯 7 位 ASCII（无 BOM），启动前会自动清除 `ELECTRON_RUN_AS_NODE` 与 `FP_SMOKE` 环境变量并校验 `electron.exe` 与 `out\main\index.js`：
+仓库根目录的 `.vbs` 脚本均采用纯 7 位 ASCII（无 BOM），启动前会自动清除 `ELECTRON_RUN_AS_NODE`、`ALT_T_SMOKE` 与兼容变量 `FP_SMOKE`，并校验 `electron.exe` 与 `out\main\index.js`：
 
 ```powershell
 # 无黑框静默启动到系统托盘
@@ -120,16 +138,17 @@ wscript.exe //B //NoLogo watchdog.vbs
 
 ## 跨操作系统支持矩阵
 
-| 能力项 | Windows 10 / 11（主力一等公民） | macOS | Linux（X11） | Linux（Wayland） |
+| 能力项 | Windows 10 / 11（一级原生支持） | macOS（二级增强支持） | Linux X11（社区支持） | Linux Wayland（社区支持） |
 | :--- | :---: | :---: | :---: | :---: |
 | **悬浮翻译与双引擎主备回退** | ✅ 原生支持 | ✅ 原生支持 | ✅ 原生支持 | ✅ 原生支持 |
-| **`Alt + T` 回车自动注入终端** | ✅ `koffi` Win32 `SendInput` | ✅ `osascript` `Cmd+V`* | ✅ `xdotool` | ⚠️ 复制并归还焦点** |
-| **`Alt + R` / `Alt + E` 跨窗取词** | ✅ 类名识别 + UIPI 检测 | ✅ `osascript` `Cmd+C`* | ✅ `xdotool` | ⚠️ 降级复制模式** |
+| **`Alt + T` 回车自动注入终端** | ✅ `koffi` Win32 `SendInput` | ✅ `koffi` `CGEvent`（`osascript` 兜底）* | ✅ `xdotool` | ✅ `ydotool` / `wtype`（无则剪贴板兜底）** |
+| **`Alt + R` / `Alt + E` 跨窗取词** | ✅ 类名 + UIA + UIPI 检测 | ✅ `koffi` `CGEvent`（`Cmd+C`）* | ✅ `xdotool` | ✅ `ydotool` / `wtype`（无则剪贴板兜底）** |
+| **Option B 终端自动退格替换** | ✅ `VK_BACK` 分批注入 | ✅ `CGEvent` `0x33` 分批注入* | ✅ `xdotool` 异步 | ✅ `ydotool` / `wtype` 异步 |
 | **排除系统剪贴板历史（`Win + V`）** | ✅ `ClipboardItem` 原生标记 | — | — | — |
 | **静默开机自启** | ✅ `.lnk` / LoginItem | ✅ `LoginItemSettings` | ✅ `~/.config/autostart` | ✅ `~/.config/autostart` |
 
-*\* macOS 需在 `系统设置 → 隐私与安全性 → 辅助功能` 授权。*  
-*\*\* Linux Wayland 从协议层禁止跨窗注入按键，按 `Enter` 会安全复制到剪贴板并归还目标窗口焦点。*
+*\* macOS 通过 `koffi` 直调系统 `ApplicationServices.framework`（`CGEventPost` + `AXIsProcessTrusted`），延迟低于 2 ms；首次缺少辅助功能权限时自动打开 `系统设置 → 隐私与安全性 → 辅助功能`。*  
+*\*\* Linux Wayland 安装 `ydotool`（通用内核 `uinput` 方案，例如 `sudo apt install ydotool` 并启动 `ydotoold`）或 `wtype`（`wlroots` 系合成器）即可启用跨窗按键注入；未安装时自动降级为复制到剪贴板并提示粘贴。*
 
 ---
 
@@ -137,7 +156,7 @@ wscript.exe //B //NoLogo watchdog.vbs
 
 ### 环境要求
 - **操作系统**：Windows 10 / 11 (x64)（完整 Win32 原生能力与安装包构建）
-- **Node.js**：`>= 22.12.0`（或 `^20.19.0`），全工程零 `node-gyp` 编译（`koffi` 自带 `win32_x64` 预编译二进制）
+- **Node.js**：`>= 22.12.0`（或 `^20.19.0`），全工程零 `node-gyp` 编译（打包钩子自动裁剪无用多国语言包与非目标平台的 `koffi` 二进制）
 
 ### 常用命令
 
@@ -145,10 +164,10 @@ wscript.exe //B //NoLogo watchdog.vbs
 # 1. 安装依赖
 npm install
 
-# 2. 安全运行全套验证（强制隔离冒烟，不抢占线上热键与单实例锁）
-$env:FP_SMOKE="1"; npm run verify
+# 2. 安全运行全套验证（强制隔离冒烟，不抢占线上热键与单实例锁；同时兼容旧变量 FP_SMOKE=1）
+$env:ALT_T_SMOKE="1"; npm run verify
 
-# 3. 打包 Windows NSIS 安装包与 Portable 单文件便携版（含 @electron/fuses 加固）
+# 3. 打包瘦身后的 Windows NSIS 安装包与 Portable 单文件便携版（仅留中英语言包、单架构 koffi、@electron/fuses 加固）
 npm run dist:win
 ```
 

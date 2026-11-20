@@ -46,7 +46,7 @@ jobs:
       - name: Run isolated Electron smoke test
         shell: pwsh
         env:
-          FP_SMOKE: '1'
+          ALT_T_SMOKE: '1'
         run: npm run smoke
 
       - name: Verify unpacked Windows electron-builder & Fuses build

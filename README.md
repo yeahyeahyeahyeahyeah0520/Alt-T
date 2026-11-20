@@ -12,6 +12,20 @@
 
 ---
 
+## Download & Quick Install
+
+Download prebuilt Windows binaries from the [**Latest GitHub Release**](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/releases/latest):
+- **`Alt-T-<version>-setup.exe`** — Standard NSIS installer (custom install directory, Start Menu shortcut, optional Startup launch).
+- **`Alt-T-<version>-portable.exe`** — Single-file portable executable (no installation required).
+
+> [!NOTE]
+> **Windows SmartScreen Notice (Unsigned Open-Source Build)**: Because community builds do not yet carry a commercial EV code-signing certificate, Windows SmartScreen may show *"Windows protected your PC"* on first launch. Click **More info → Run anyway** after verifying the file hash against the release's `SHA256SUMS.txt`:
+> ```powershell
+> Get-FileHash .\Alt-T-0.1.0-setup.exe -Algorithm SHA256
+> ```
+
+---
+
 ## Why Alt-T?
 
 Typing non-ASCII / CJK prompts directly inside terminal TUIs (`Claude Code`, `Codex`, `Ink` / `Bubbletea` apps) often causes dropped keystrokes, frozen IME candidate windows, or accidental `^C` (`SIGINT`) session interruptions when traditional translation tools send `Ctrl+C` to unhighlighted terminals.
@@ -30,7 +44,7 @@ Typing non-ASCII / CJK prompts directly inside terminal TUIs (`Claude Code`, `Co
   - **GUI Apps**: Captures selection, auto-detects language (`zh-Hans` ↔ `en`), and replaces in-place.
   - **Terminals (Option A Default + Option B Toggle)**: Classifies windows by Win32 class first (`CASCADIA_HOSTING_WINDOW_CLASS`, `ConsoleWindowClass`, `mintty`, `VirtualConsoleClass`) and process name (`wt.exe`, `wezterm-gui.exe`, `alacritty.exe`, `ghostty.exe`, `warp.exe`, `waveterm.exe`, `putty.exe`, `kitty.exe`, `xshell.exe`, `mobaxterm.exe`), ensuring `^C` is never sent. See [Terminal & IDE Integrated Terminal Guidance](#terminal--ide-integrated-terminal-guidance).
 - **🔍 Non-Destructive Selection Stream (`Alt + E`)**: Highlights text in any window and streams the translation beside your cursor (`AbortController`-wired for both streaming and non-streaming requests).
-- **🔌 Zero-Config Dual Engine & Automatic Failover**: Works out of the box via Microsoft Edge Direct (`edge`) and supports any OpenAI-compatible endpoint (`OpenAI`, `DeepSeek`, `Gemini`, `GLM`, `Qwen`, or keyless local loopback LLMs) with automatic retryable failover (`enableFallback`).
+- **🔌 Zero-Config Dual Engine, Dual-Path Edge Resilience & One-Click Test**: Works out of the box via Microsoft Edge (`edge`, with automatic `translatetext` → `auth` Bearer token cognitive v3 failover) and supports any OpenAI-compatible endpoint (`Ollama`, `DeepSeek`, `OpenAI`, `OpenRouter`, `SiliconFlow`, or keyless local loopback LLMs) with quick presets, an isolated **Test Connection** button in Settings, and automatic failover (`enableFallback`).
 - **🧱 Prompt-Injection-Hardened Developer Templates**: Built-in `translate` (`通用与技术翻译`) and `cli-prompt` (`CLI 提示词精炼`) templates treat input strictly as literal source text and protect code blocks, CLI flags, paths, URLs, and identifiers.
 - **🔒 Hardened Security & Privacy**:
   - **Zero `Win + V` History Pollution**: Transient clipboard writes use single-`ClipboardItem` OS exclusion markers (`ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory`, `CanUploadToCloudClipboard`).
@@ -55,11 +69,14 @@ Typing non-ASCII / CJK prompts directly inside terminal TUIs (`Claude Code`, `Co
 
 ## Terminal & IDE Integrated Terminal Guidance
 
-### IDE Integrated Terminals (`VS Code`, `Cursor`, `Antigravity`)
+### IDE Integrated Terminals (`VS Code`, `Cursor`, `Windsurf`, `Antigravity`)
 > [!IMPORTANT]
-> **Inside VS Code, Cursor, or Antigravity integrated terminals, always prefer `Alt + T` (`directInputTranslate`).**
+> **Inside VS Code, Cursor, Windsurf, or Antigravity integrated terminals, always prefer `Alt + T` (`directInputTranslate`).**
 >
-> `Code.exe` is intentionally classified as `'normal'` (GUI editor) rather than `'wt'` so that normal editor selections keep using standard `Ctrl+C` / `Ctrl+V`. Because Win32 cannot distinguish an integrated terminal pane from the surrounding IDE editor frame by HWND alone, pressing `Alt + T` inside the integrated terminal is the cleanest, zero-`SIGINT` way to compose and inject commands or prompts.
+> `Code.exe` stays classified as `'normal'` for regular editor panes so normal text selection continues to use `Ctrl+C` / `Ctrl+V`. To guard integrated terminals from accidental `^C` (`SIGINT`), Alt-T layers three protections:
+> 1. **Automatic Windows UI Automation Probe**: On known Electron IDEs (`code.exe`, `cursor.exe`, `windsurf.exe`, `antigravity.exe`, `vscodium.exe`, `trae.exe`), Alt-T runs a bounded (`<= 30ms`) `IUIAutomation::GetFocusedElement` check—when focus is inside an `xterm` / Terminal pane, it dynamically upgrades classification to `'wt'` (`Ctrl+Shift+C` / safe popup preview).
+> 2. **Zero-`Ctrl+C` Force-Popup List (`forcePopupOnReplaceExes`)**: If accessibility is disabled in your IDE, add `code.exe` (or `cursor.exe`) in Settings under **防误触强制浮窗**—pressing `Alt + R` on those executables skips `Ctrl+C` entirely and opens the `Alt + T` direct-input bar.
+> 3. **Direct Input Flow (`Alt + T`)**: Never sends a copy keystroke and pastes cleanly into every IDE integrated terminal.
 
 ### Terminal `Alt + R` Strategy: Option A (Default) vs. Option B
 - **Option A — Safe Popup Preview (`terminalAutoBackspace: false`, default)**:
@@ -94,14 +111,15 @@ On first run, Alt-T initializes `config.json` in your user data directory (e.g.,
   }
   ```
 - **Remote Endpoints**: Any non-loopback `baseUrl` with an empty `apiKey` fails fast locally with error code `CONFIG` (`OpenAI API key is empty`) without sending any network request.
-- **Custom Terminal Exe Whitelist**: Add custom terminal `.exe` names in Settings (or `customWtExeNames` / `customConhostExeNames` in `config.json`) to route extra terminals to `Ctrl+Shift+V` or `Shift+Insert` without modifying source code.
+- **Custom Terminal & Safety Lists**: Configure `customWtExeNames`, `customConhostExeNames`, and `forcePopupOnReplaceExes` directly in Settings (or `config.json`) without modifying source code.
+- **One-Click Presets & Isolated Connection Test**: Use the Settings preset selector (`Ollama`, `DeepSeek`, `OpenAI`, `OpenRouter`, `SiliconFlow`) and **Test Connection** button to verify unsaved provider/proxy drafts without writing history or overwriting disk config.
 - **Clipboard Format Scope**: During selection capture and paste, Alt-T backs up and restores `text/plain`, `text/html`, `text/rtf`, and `image/*`. Non-text/image OS formats such as file drops (`CF_HDROP`) are not backed up.
 
 ---
 
 ## Silent Launcher & 24/7 Watchdog (Windows)
 
-Both `.vbs` scripts are pure 7-bit ASCII (no BOM), strip `ELECTRON_RUN_AS_NODE` and `FP_SMOKE`, verify `electron.exe` and `out\main\index.js`, and run from the repository root:
+Both `.vbs` scripts are pure 7-bit ASCII (no BOM), strip `ELECTRON_RUN_AS_NODE`, `ALT_T_SMOKE`, and legacy `FP_SMOKE`, verify `electron.exe` and `out\main\index.js`, and run from the repository root:
 
 ```powershell
 # Launch silently into the system tray (no console window)
@@ -120,16 +138,17 @@ wscript.exe //B //NoLogo watchdog.vbs
 
 ## Cross-Platform Support Matrix
 
-| Capability | Windows 10 / 11 (Tier 1) | macOS | Linux (X11) | Linux (Wayland) |
+| Capability | Windows 10 / 11 (Tier 1) | macOS (Tier 2) | Linux X11 (Tier 3) | Linux Wayland (Tier 3) |
 | :--- | :---: | :---: | :---: | :---: |
 | **Floating Popup & Dual-Engine Translation** | ✅ Native | ✅ Native | ✅ Native | ✅ Native |
-| **`Alt + T` Direct-Paste to Terminal** | ✅ `koffi` Win32 `SendInput` | ✅ `osascript` `Cmd+V`* | ✅ `xdotool` | ⚠️ Clipboard fallback** |
-| **`Alt + R` / `Alt + E` Selection Capture** | ✅ Class + UIPI aware | ✅ `osascript` `Cmd+C`* | ✅ `xdotool` | ⚠️ Clipboard fallback** |
+| **`Alt + T` Direct-Paste to Terminal** | ✅ `koffi` Win32 `SendInput` | ✅ `koffi` `CGEvent` (`osascript` fallback)* | ✅ `xdotool` | ✅ `ydotool` / `wtype` (or clipboard fallback)** |
+| **`Alt + R` / `Alt + E` Selection Capture** | ✅ Class + UIA + UIPI aware | ✅ `koffi` `CGEvent` (`Cmd+C`)* | ✅ `xdotool` | ✅ `ydotool` / `wtype` (or clipboard fallback)** |
+| **Option B Terminal Auto-Backspace** | ✅ `VK_BACK` batched | ✅ `CGEvent` `0x33` batched* | ✅ `xdotool` async | ✅ `ydotool` / `wtype` async |
 | **Clipboard History Exclusion (`Win + V`)** | ✅ `ClipboardItem` OS tags | — | — | — |
 | **Silent Startup / Auto-Launch** | ✅ `.lnk` / Login Item | ✅ `LoginItemSettings` | ✅ `~/.config/autostart` | ✅ `~/.config/autostart` |
 
-*\* macOS requires **Accessibility** permission for synthetic `Cmd+C` / `Cmd+V`.*  
-*\*\* Linux Wayland blocks cross-window keystroke injection by design; Alt-T safely copies translations to the clipboard and returns focus.*
+*\* macOS uses native `koffi` `ApplicationServices.framework` (`CGEventPost` + `AXIsProcessTrusted`) with sub-2ms latency and opens **System Settings → Privacy & Security → Accessibility** automatically on first denied call.*  
+*\*\* On Linux Wayland, installing `ydotool` (universal `uinput`, e.g. `sudo apt install ydotool` + `ydotoold`) or `wtype` (`wlroots` compositors) enables synthetic keystrokes; otherwise Alt-T automatically falls back to copying translations cleanly to the clipboard.*
 
 ---
 
@@ -137,7 +156,7 @@ wscript.exe //B //NoLogo watchdog.vbs
 
 ### Prerequisites
 - **OS**: Windows 10 / 11 (x64) for full Win32 native integration & packaging
-- **Node.js**: `>= 22.12.0` (or `^20.19.0`) — zero `node-gyp` compilation required (`koffi` ships prebuilt `win32_x64` binaries)
+- **Node.js**: `>= 22.12.0` (or `^20.19.0`) — zero `node-gyp` compilation required (`koffi` ships prebuilt binaries; packaging automatically strips unused locales and foreign-architecture `koffi` binaries)
 
 ### Commands
 
@@ -145,10 +164,10 @@ wscript.exe //B //NoLogo watchdog.vbs
 # 1. Install dependencies
 npm install
 
-# 2. Run the full verification suite safely (isolated smoke mode — never steals live hotkeys)
-$env:FP_SMOKE="1"; npm run verify
+# 2. Run the full verification suite safely (isolated smoke mode — never steals live hotkeys; legacy FP_SMOKE=1 also accepted)
+$env:ALT_T_SMOKE="1"; npm run verify
 
-# 3. Build Windows NSIS installer + Portable executable (with @electron/fuses hardening)
+# 3. Build slimmed Windows NSIS installer + Portable executable (en-US/zh-CN locales, target-arch koffi, @electron/fuses)
 npm run dist:win
 ```
 

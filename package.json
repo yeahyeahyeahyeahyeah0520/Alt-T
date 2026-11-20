@@ -62,13 +62,22 @@
   "build": {
     "appId": "com.alt-t.app",
     "productName": "Alt-T",
+    "asar": true,
+    "compression": "maximum",
+    "electronLanguages": [
+      "en-US",
+      "zh-CN"
+    ],
     "directories": {
       "output": "release",
       "buildResources": "build"
     },
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/koffi/{doc,lib,src,vendor}/**/*",
+      "!node_modules/koffi/{CHANGELOG.md,README.md,index.d.ts}",
+      "!node_modules/**/*.{d.ts,map}"
     ],
     "afterPack": "./scripts/after-pack.mjs",
     "win": {

@@ -45,6 +45,7 @@ export const MSG = {
 
   // --- 终端专用 ---
   TERMINAL_SELECTION_TRANSLATED: '终端选区已译好：按 Enter 直接填入命令行，按 Esc 关闭',
+  FORCE_POPUP_REPLACE_REDIRECT: '当前进程已设为防误触保护：已切换为独立输入条，按 Enter 直接填入',
 
   // --- 动态格式消息 ---
   inputTooLong: (maxChars: number): string => `输入文本超过 ${maxChars} 字符上限`,

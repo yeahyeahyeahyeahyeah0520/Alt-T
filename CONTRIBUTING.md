@@ -29,14 +29,14 @@ Useful development commands:
 
 ---
 
-## 3. Running Verification Safely (`FP_SMOKE=1`)
+## 3. Running Verification Safely (`ALT_T_SMOKE=1`)
 
 > [!IMPORTANT]
-> Always set `FP_SMOKE=1` when running `npm run verify` or `npm run smoke` on a machine that may already have a live Alt-T instance running. Smoke mode redirects `userData` to `os.tmpdir()` and skips tray creation, single-instance lock acquisition, and global hotkey registration.
+> Always set `ALT_T_SMOKE=1` (legacy `FP_SMOKE=1` is also accepted) when running `npm run verify` or `npm run smoke` on a machine that may already have a live Alt-T instance running. Smoke mode redirects `userData` to `os.tmpdir()` and skips tray creation, single-instance lock acquisition, and global hotkey registration.
 
 ```powershell
 # PowerShell
-$env:FP_SMOKE="1"; npm run verify
+$env:ALT_T_SMOKE="1"; npm run verify
 ```
 
 `npm run verify` runs five sequential gates:
@@ -85,7 +85,7 @@ Every commit and PR must pass `npm run check`, which enforces:
 
 ## 6. Pull Request Checklist
 
-- [ ] `$env:FP_SMOKE="1"; npm run verify` passes 100% locally.
+- [ ] `$env:ALT_T_SMOKE="1"; npm run verify` passes 100% locally.
 - [ ] `npm run check` passes with zero rule, `.vbs` ASCII/no-BOM, PII, or secret violations.
 - [ ] New or modified behavior is covered by unit / fault-injection tests in `tests/`.
 - [ ] Documentation (`README.md`, `README.zh-CN.md`, `ARCHITECTURE.md`, `SECURITY.md`, `NOTES.md`) is updated if architecture, hotkeys, or config schema changed.

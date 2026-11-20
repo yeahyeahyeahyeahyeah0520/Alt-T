@@ -1,11 +1,31 @@
 import { execFileSync } from 'node:child_process'
 import { app } from 'electron'
 import {
+  buildLinuxBackspaceCommand,
+  buildLinuxCopyCommand,
+  buildLinuxPasteCommand,
+  detectLinuxInputBackend,
+  getLinuxInputBackend,
+  isLinuxWaylandEnv,
+  sendLinuxBackspaces,
+  sendLinuxCopyShortcut,
+  sendLinuxPasteShortcut,
+  WAYLAND_SYNTHETIC_HANDLE,
+  type LinuxInputBackend
+} from './linuxInput'
+import {
+  isMacAccessibilityTrusted,
+  sendMacBackspaces,
+  sendMacCopyShortcut,
+  sendMacPasteShortcut
+} from './macInput'
+import {
   classifyWindowKind as win32ClassifyWindowKind,
   focusWindow as win32FocusWindow,
   getClipboardSequenceNumber as win32GetClipboardSequenceNumber,
   getCurrentDesktopName as win32GetCurrentDesktopName,
   getForegroundWindow as win32GetForegroundWindow,
+  getWindowExeName as win32GetWindowExeName,
   getWindowTitle as win32GetWindowTitle,
   injectMaskKey as win32InjectMaskKey,
   isOwnProcessWindow as win32IsOwnProcessWindow,
@@ -21,6 +41,16 @@ import {
   type WindowInputKind
 } from './win32Input'
 
+export {
+  buildLinuxBackspaceCommand,
+  buildLinuxCopyCommand,
+  buildLinuxPasteCommand,
+  detectLinuxInputBackend,
+  getLinuxInputBackend,
+  isLinuxWaylandEnv as isLinuxWayland,
+  WAYLAND_SYNTHETIC_HANDLE,
+  type LinuxInputBackend
+}
 export type { WindowInputKind }
 
 export interface CustomTerminalExeSets {
@@ -60,13 +90,6 @@ const LINUX_WT_CLASSES = [
   'hyper'
 ]
 
-export function isLinuxWayland(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (
-    Boolean(env['WAYLAND_DISPLAY']) ||
-    (env['XDG_SESSION_TYPE'] ?? '').trim().toLowerCase() === 'wayland'
-  )
-}
-
 export function classifyMacAppName(appName: string): WindowInputKind {
   const lower = appName.trim().toLowerCase()
   return MAC_TERMINAL_NAMES.has(lower) ? 'wt' : 'normal'
@@ -83,7 +106,13 @@ export function classifyLinuxWmClass(wmClassOutput: string): WindowInputKind {
   return 'normal'
 }
 
-const macKindCache = new Map<number, WindowInputKind>()
+function parseLinuxWmClassName(wmClassOutput: string): string {
+  const matches = [...wmClassOutput.matchAll(/"([^"]+)"/g)]
+  const first = matches[0]?.[1] ?? ''
+  return first.trim().toLowerCase()
+}
+
+const macAppInfoCache = new Map<number, { kind: WindowInputKind; appName: string }>()
 
 function runExecSync(cmd: string, args: string[], timeout = 400): string | null {
   try {
@@ -108,8 +137,7 @@ export function canInjectKeystrokes(): boolean {
     return true
   }
   if (process.platform === 'linux') {
-    if (isLinuxWayland()) return false
-    return runExecSync('which', ['xdotool'], 250) !== null
+    return getLinuxInputBackend() !== 'none'
   }
   return false
 }
@@ -130,14 +158,20 @@ export function getActiveTargetHandle(): number {
     const pid = Number(sep >= 0 ? out.slice(0, sep) : out)
     const name = sep >= 0 ? out.slice(sep + 1) : ''
     if (!Number.isFinite(pid) || pid <= 0) return 0
-    macKindCache.set(pid, classifyMacAppName(name))
-    if (macKindCache.size > 64) {
-      const oldest = macKindCache.keys().next().value
-      if (oldest !== undefined) macKindCache.delete(oldest)
+    macAppInfoCache.set(pid, {
+      kind: classifyMacAppName(name),
+      appName: name.trim().toLowerCase()
+    })
+    if (macAppInfoCache.size > 64) {
+      const oldest = macAppInfoCache.keys().next().value
+      if (oldest !== undefined) macAppInfoCache.delete(oldest)
     }
     return pid
   }
-  if (process.platform === 'linux' && !isLinuxWayland()) {
+  if (process.platform === 'linux') {
+    if (isLinuxWaylandEnv()) {
+      return getLinuxInputBackend() !== 'none' ? WAYLAND_SYNTHETIC_HANDLE : 0
+    }
     const out = runExecSync('xdotool', ['getactivewindow'])
     const wid = out ? Number(out) : 0
     return Number.isFinite(wid) && wid > 0 ? wid : 0
@@ -159,7 +193,10 @@ export function isValidExternalTarget(handle: number): boolean {
       return false
     }
   }
-  if (process.platform === 'linux' && !isLinuxWayland()) {
+  if (process.platform === 'linux') {
+    if (isLinuxWaylandEnv()) {
+      return handle === WAYLAND_SYNTHETIC_HANDLE && getLinuxInputBackend() !== 'none'
+    }
     const pidOut = runExecSync('xdotool', ['getwindowpid', String(handle)])
     const pid = pidOut ? Number(pidOut) : 0
     return pid > 0 && pid !== process.pid && handle > 0
@@ -181,7 +218,9 @@ export function isTargetAlive(handle: number): boolean {
     }
   }
   if (process.platform === 'linux') {
-    if (isLinuxWayland()) return true
+    if (isLinuxWaylandEnv()) {
+      return handle === WAYLAND_SYNTHETIC_HANDLE
+    }
     return runExecSync('xprop', ['-id', String(handle), 'WM_CLASS'], 250) !== null
   }
   return false
@@ -209,12 +248,27 @@ export function isOwnProcessWindow(handle: number): boolean {
   if (process.platform === 'darwin') {
     return handle === process.pid
   }
-  if (process.platform === 'linux' && !isLinuxWayland()) {
+  if (process.platform === 'linux' && !isLinuxWaylandEnv()) {
     const pidOut = runExecSync('xdotool', ['getwindowpid', String(handle)])
     const pid = pidOut ? Number(pidOut) : 0
     return pid > 0 && pid === process.pid
   }
   return false
+}
+
+export function getTargetExeName(handle: number): string {
+  if (!handle) return ''
+  if (process.platform === 'win32') {
+    return win32GetWindowExeName(handle)
+  }
+  if (process.platform === 'darwin') {
+    return macAppInfoCache.get(handle)?.appName ?? ''
+  }
+  if (process.platform === 'linux' && !isLinuxWaylandEnv()) {
+    const wmClass = runExecSync('xprop', ['-id', String(handle), 'WM_CLASS'], 250) ?? ''
+    return parseLinuxWmClassName(wmClass)
+  }
+  return ''
 }
 
 export function getWindowTitle(handle: number): string {
@@ -243,9 +297,9 @@ function getTargetInputKind(handle: number, customSets?: CustomTerminalExeSets):
     return win32ClassifyWindowKind(handle, customSets?.extraWt, customSets?.extraConhost)
   }
   if (process.platform === 'darwin') {
-    return macKindCache.get(handle) ?? 'normal'
+    return macAppInfoCache.get(handle)?.kind ?? 'normal'
   }
-  if (process.platform === 'linux' && !isLinuxWayland()) {
+  if (process.platform === 'linux' && !isLinuxWaylandEnv()) {
     const wmClass = runExecSync('xprop', ['-id', String(handle), 'WM_CLASS'], 250) ?? ''
     return classifyLinuxWmClass(wmClass)
   }
@@ -263,6 +317,14 @@ export function getTargetPasteKind(handle: number, customSets?: CustomTerminalEx
 export async function dispatchBackspaces(charCount: number): Promise<void> {
   if (process.platform === 'win32') {
     await win32SendBackspaces(charCount)
+    return
+  }
+  if (process.platform === 'darwin') {
+    await sendMacBackspaces(charCount)
+    return
+  }
+  if (process.platform === 'linux') {
+    await sendLinuxBackspaces(charCount)
   }
 }
 
@@ -272,13 +334,19 @@ export function focusTarget(handle: number): boolean {
     return win32FocusWindow(handle)
   }
   if (process.platform === 'darwin') {
+    if (!isMacAccessibilityTrusted()) {
+      return false
+    }
     const res = runExecSync('osascript', [
       '-e',
       `tell application "System Events" to set frontmost of (first process whose unix id is ${handle}) to true`
     ])
     return res !== null
   }
-  if (process.platform === 'linux' && !isLinuxWayland()) {
+  if (process.platform === 'linux') {
+    if (isLinuxWaylandEnv()) {
+      return handle === WAYLAND_SYNTHETIC_HANDLE
+    }
     return runExecSync('xdotool', ['windowactivate', '--sync', String(handle)], 500) !== null
   }
   return false
@@ -296,21 +364,11 @@ export function dispatchCopyShortcut(kind: WindowInputKind): void {
     return
   }
   if (process.platform === 'darwin') {
-    const res = runExecSync('osascript', [
-      '-e',
-      'tell application "System Events" to keystroke "c" using command down'
-    ])
-    if (res === null) {
-      throw new Error('MACOS_ACCESSIBILITY_DENIED')
-    }
+    sendMacCopyShortcut()
     return
   }
-  if (process.platform === 'linux' && !isLinuxWayland()) {
-    const chord = kind === 'wt' ? 'ctrl+shift+c' : kind === 'conhost' ? 'ctrl+Insert' : 'ctrl+c'
-    const res = runExecSync('xdotool', ['key', '--clearmodifiers', chord])
-    if (res === null) {
-      throw new Error('XDOTOOL_COPY_FAILED')
-    }
+  if (process.platform === 'linux') {
+    sendLinuxCopyShortcut(kind)
     return
   }
   throw new Error('KEYSTROKE_INJECTION_UNSUPPORTED')
@@ -322,21 +380,11 @@ export function dispatchPasteShortcut(kind: WindowInputKind): void {
     return
   }
   if (process.platform === 'darwin') {
-    const res = runExecSync('osascript', [
-      '-e',
-      'tell application "System Events" to keystroke "v" using command down'
-    ])
-    if (res === null) {
-      throw new Error('MACOS_ACCESSIBILITY_DENIED')
-    }
+    sendMacPasteShortcut()
     return
   }
-  if (process.platform === 'linux' && !isLinuxWayland()) {
-    const chord = kind === 'wt' ? 'ctrl+shift+v' : kind === 'conhost' ? 'shift+Insert' : 'ctrl+v'
-    const res = runExecSync('xdotool', ['key', '--clearmodifiers', chord])
-    if (res === null) {
-      throw new Error('XDOTOOL_PASTE_FAILED')
-    }
+  if (process.platform === 'linux') {
+    sendLinuxPasteShortcut(kind)
     return
   }
   throw new Error('KEYSTROKE_INJECTION_UNSUPPORTED')

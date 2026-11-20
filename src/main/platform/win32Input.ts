@@ -14,6 +14,7 @@ import {
   type InputEvent,
   type Win32Api
 } from './win32Ffi'
+import { isFocusedIdeIntegratedTerminal, isIdeHostExeName } from './win32Uia'
 
 export {
   classifyExeName,
@@ -190,7 +191,7 @@ function getWindowClassName(hwnd: number): string {
   }
 }
 
-function getWindowExeName(hwnd: number): string {
+export function getWindowExeName(hwnd: number): string {
   if (!hwnd) return ''
   try {
     const api = ensureWin32()
@@ -244,12 +245,16 @@ export function classifyWindowKind(
   extraWtExes: ReadonlySet<string> = new Set(),
   extraConhostExes: ReadonlySet<string> = new Set()
 ): WindowInputKind {
-  return classifyTerminalWindow(
-    getWindowClassName(hwnd),
-    getWindowExeName(hwnd),
-    extraWtExes,
-    extraConhostExes
-  )
+  const className = getWindowClassName(hwnd)
+  const exeName = getWindowExeName(hwnd)
+  const baseKind = classifyTerminalWindow(className, exeName, extraWtExes, extraConhostExes)
+  if (baseKind === 'normal' && isIdeHostExeName(exeName)) {
+    const pid = getWindowPid(hwnd)
+    if (isFocusedIdeIntegratedTerminal(pid, exeName)) {
+      return 'wt'
+    }
+  }
+  return baseKind
 }
 
 export function isOwnProcessWindow(hwnd: number, selfPid = process.pid): boolean {

@@ -65,7 +65,7 @@ This document records verified runtime observations, architectural deviations fr
   - `session.defaultSession` denies all permission requests/checks; `electron.vite.config.ts` strips dev `localhost` / `ws://localhost:*` from production HTML CSP (`connect-src 'self'`), reinforced by main-process `onHeadersReceived`.
   - `configStore.ts` retries `writeAtomic` `renameSync` on `EPERM` / `EBUSY` / `EACCES` (`15ms`, `35ms`, `70ms`), isolates `addHistory` errors, and encrypts `apiKey` at rest via DPAPI (`safeStorage`).
 - **Launchers & Watchdog (`start-silent.vbs`, `watchdog.vbs`, `autoLaunch.ts`)**:
-  - Both `.vbs` scripts are pure 7-bit ASCII without BOM, verify `electron.exe` and `out\main\index.js`, strip `ELECTRON_RUN_AS_NODE` / `FP_SMOKE`, and pass `"."`.
+  - Both `.vbs` scripts are pure 7-bit ASCII without BOM, verify `electron.exe` and `out\main\index.js`, strip `ELECTRON_RUN_AS_NODE` / `ALT_T_SMOKE` / `FP_SMOKE`, and pass `"."`.
   - `watchdog.vbs` uses synchronous `exitCode = shell.Run(..., 0, True)`, exits cleanly on `exitCode = 0` or `Alt-T\clean-exit.flag`, restarts crashes with `2s`–`60s` backoff, and never deletes `SingletonLock`.
   - `autoLaunch.ts` skips Startup writes when `ELECTRON_RENDERER_URL` is set, supports `PORTABLE_EXECUTABLE_FILE`, and compares existing shortcuts before rewriting.
 
@@ -75,12 +75,12 @@ This document records verified runtime observations, architectural deviations fr
 
 | Item | Original Concern | Verified Resolution / Status |
 |---|---|---|
-| **U1** | `disable-features=RendererCodeIntegrity` acceptance in Electron 45 | Accepted and verified via `FP_SMOKE=1` launch on Electron 45.3.3; retained for Windows IME/AV DLL compatibility with compensating sandbox/CSP/Fuses controls (documented in `SECURITY.md`). |
+| **U1** | `disable-features=RendererCodeIntegrity` acceptance in Electron 45 | Accepted and verified via `ALT_T_SMOKE=1` launch on Electron 45.3.3; retained for Windows IME/AV DLL compatibility with compensating sandbox/CSP/Fuses controls (documented in `SECURITY.md`). |
 | **U2** | Embedded Node version inside Electron `45.3.3` | Verified `Node 24.22.3` (`win32 x64`), satisfying `undici@7.30.2` (`>=20.18.1`) and `electron-vite@6.0.0`. |
 | **U3** | Mixed-DPI screenshot window `setBounds` offset | Obsolete (`Alt+W` screenshot capture removed). `popupWindow.ts` applies post-`show` `setBounds` with `programmaticResizeUntil` guard for mixed-DPI stability. |
 | **U4** | `VK_MASK (0xE8)` suppressing stray Alt/Win menu activation | Implemented in `releaseModifiers()`, `injectMaskKey()` (before `Alt+T`/`Alt+Q`), and `sendChordWithModifierGuard()`. |
 | **U5** | `undici.ProxyAgent` HTTP target behavior (`CONNECT` vs absolute URI) | Verified with local `node:http` proxy server in `tests/providers.test.ts`; credentials redacted via `redactUrlCredentials`. |
-| **U6** | Unofficial Edge `translatetext` endpoint reliability | Retained as zero-config primary/fallback provider; errors reported cleanly via `ProviderError` without silent retry loops. |
+| **U6** | Unofficial Edge `translatetext` endpoint reliability | Retained as zero-config primary/fallback provider with automatic internal failover to `edge.microsoft.com/translate/auth` + Cognitive v3 Bearer endpoint on HTTP 401/403/429/5xx or parse failures; errors reported cleanly via `ProviderError`. |
 | **U7** | Conservative locked dependency versions (`ts@5.9.3`, `koffi@2.16.4`, `undici@7.30.2`) | Verified compatible on Node 22/24 and Electron 45.3.3; `koffi@2.16.4` prebuilt `win32_x64` binary verified (`sizeof(INPUT) === 40`). |
 | **U8** | Vite 8 `build.rollupOptions` compatibility | Verified cleanly under `vite@8.3.8` + `electron-vite@6.0.0`. |
 | **U9** | Clipboard backup excludes `CF_HDROP` and custom binary formats | Retained and explicitly disclosed in `SettingsView.vue` footer and `README*.md`; transient writes tagged to avoid `Win+V` history pollution. |

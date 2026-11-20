@@ -54,6 +54,7 @@ const CRASH_WINDOW_MS = 5000
 const MAX_CRASH_RELOADS_IN_WINDOW = 3
 const PROGRAMMATIC_RESIZE_GUARD_MS = 250
 const MAX_PENDING_QUEUE = 32
+const IDLE_MEMORY_TRIM_MS = 10 * 60 * 1000
 
 export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController {
   const cfg = deps.getConfig()
@@ -97,6 +98,7 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
   const activeTranslations = new Set<string>()
   let resizeTimer: ReturnType<typeof setTimeout> | null = null
   let crashReloadTimer: ReturnType<typeof setTimeout> | null = null
+  let idleTrimTimer: ReturnType<typeof setTimeout> | null = null
   let programmaticResizeUntil = 0
   let crashWindowStartAt = 0
   let crashCountInWindow = 0
@@ -195,6 +197,37 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
     }, delayMs)
   })
 
+  function clearIdleTrimTimer(): void {
+    if (idleTrimTimer !== null) {
+      clearTimeout(idleTrimTimer)
+      idleTrimTimer = null
+    }
+  }
+
+  function scheduleIdleMemoryTrim(): void {
+    clearIdleTrimTimer()
+    idleTrimTimer = setTimeout(() => {
+      idleTrimTimer = null
+      if (win.isDestroyed() || win.isVisible() || pinned || activeTranslations.size > 0) {
+        return
+      }
+      lastTargetHandle = 0
+      pendingQueue.length = 0
+      if (!win.webContents.isDestroyed()) {
+        void win.webContents.session.clearCache().catch(() => {})
+      }
+    }, IDLE_MEMORY_TRIM_MS)
+    idleTrimTimer.unref?.()
+  }
+
+  win.on('hide', () => {
+    scheduleIdleMemoryTrim()
+  })
+
+  win.on('show', () => {
+    clearIdleTrimTimer()
+  })
+
   win.on('close', (e) => {
     if (isQuitting()) return
     e.preventDefault()
@@ -233,6 +266,7 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
       clearTimeout(crashReloadTimer)
       crashReloadTimer = null
     }
+    clearIdleTrimTimer()
     pendingQueue.length = 0
     activeTranslations.clear()
     if (!initialLoadSettled) {

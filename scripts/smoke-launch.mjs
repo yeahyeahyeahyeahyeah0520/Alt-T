@@ -15,7 +15,8 @@ if (!fs.existsSync(mainEntry)) {
 }
 
 const TIMEOUT_MS = 25000
-const childEnv = { ...process.env, FP_SMOKE: '1' }
+const childEnv = { ...process.env, ALT_T_SMOKE: '1' }
+delete childEnv.FP_SMOKE
 delete childEnv.ELECTRON_RUN_AS_NODE
 
 const child = spawn(electronExecutable, ['.'], {

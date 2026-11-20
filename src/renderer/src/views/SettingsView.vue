@@ -7,6 +7,7 @@ import {
   isProtectedPromptId,
   isValidGlobalAccelerator,
   mergeConfig,
+  OPENAI_PROVIDER_PRESETS,
   restoreDefaultPrompts
 } from '../../../shared/config'
 import { truncatePreview } from '../../../shared/text'
@@ -16,7 +17,9 @@ import {
   type AppConfig,
   type HistoryItem,
   type HotkeyConfig,
-  type PromptTemplate
+  type PromptTemplate,
+  type ProviderId,
+  type ProviderTestReply
 } from '../../../shared/types'
 
 type HotkeyStatusKind = 'idle' | 'valid' | 'invalid' | 'occupied' | 'duplicate'
@@ -39,6 +42,10 @@ const latestPopupWidth = ref(DEFAULT_CONFIG.popupWidth)
 const latestPopupHeight = ref(DEFAULT_CONFIG.popupHeight)
 const customWtInput = ref('')
 const customConhostInput = ref('')
+const forcePopupInput = ref('')
+const selectedPresetId = ref('')
+const testingProvider = ref(false)
+const providerTestResult = ref<ProviderTestReply | null>(null)
 
 const hotkeyStatus = ref<Record<keyof HotkeyConfig, HotkeyStatusKind>>({
   directInputTranslate: 'idle',
@@ -137,6 +144,47 @@ function handleRestoreDefaultPrompts(): void {
   }
 }
 
+function handleApplyPreset(): void {
+  const preset = OPENAI_PROVIDER_PRESETS.find((item) => item.id === selectedPresetId.value)
+  if (!preset) return
+  form.value.openai.baseUrl = preset.baseUrl
+  form.value.openai.model = preset.model
+  providerTestResult.value = null
+}
+
+async function handleTestProvider(target?: ProviderId): Promise<void> {
+  if (testingProvider.value) return
+  const provider = target ?? form.value.primaryProvider
+  testingProvider.value = true
+  providerTestResult.value = null
+  try {
+    const temperature = parseFiniteClamp(
+      form.value.openai.temperature,
+      0,
+      2,
+      DEFAULT_CONFIG.openai.temperature
+    )
+    providerTestResult.value = await window.api.providerTest({
+      provider,
+      openai: {
+        ...form.value.openai,
+        temperature
+      },
+      proxy: { ...form.value.proxy }
+    })
+  } catch (err) {
+    providerTestResult.value = {
+      ok: false,
+      provider,
+      latencyMs: 0,
+      errorCode: 'NETWORK',
+      errorMessage: err instanceof Error ? err.message : String(err)
+    }
+  } finally {
+    testingProvider.value = false
+  }
+}
+
 async function handleClearHistory(): Promise<void> {
   try {
     await window.api.historyClear()
@@ -199,6 +247,7 @@ async function handleSave(): Promise<void> {
       popupHeight: latestPopupHeight.value,
       customWtExeNames: parseExeNameList(customWtInput.value),
       customConhostExeNames: parseExeNameList(customConhostInput.value),
+      forcePopupOnReplaceExes: parseExeNameList(forcePopupInput.value),
       history: historyItems.value
     })
 
@@ -249,6 +298,7 @@ onMounted(async () => {
     latestPopupHeight.value = loaded.popupHeight
     customWtInput.value = (loaded.customWtExeNames ?? []).join(', ')
     customConhostInput.value = (loaded.customConhostExeNames ?? []).join(', ')
+    forcePopupInput.value = (loaded.forcePopupOnReplaceExes ?? []).join(', ')
   } catch (err) {
     saveError.value = err instanceof Error ? err.message : String(err)
   }
@@ -321,10 +371,15 @@ onUnmounted(() => {
         <h2 class="group-title">翻译源</h2>
         <div class="row">
           <label class="label" for="primary-provider">主翻译源</label>
-          <select id="primary-provider" v-model="form.primaryProvider">
-            <option value="edge">Edge 免费直连</option>
-            <option value="openai">OpenAI 兼容</option>
-          </select>
+          <div class="inline-actions">
+            <select id="primary-provider" v-model="form.primaryProvider">
+              <option value="edge">Edge 免费直连</option>
+              <option value="openai">OpenAI 兼容</option>
+            </select>
+            <button type="button" :disabled="testingProvider" @click="handleTestProvider()">
+              {{ testingProvider ? '测试中...' : '测试连接' }}
+            </button>
+          </div>
         </div>
         <div class="row">
           <span class="label">自动回退</span>
@@ -333,10 +388,44 @@ onUnmounted(() => {
             主源失败后自动改用备用源
           </label>
         </div>
+        <div
+          v-if="providerTestResult"
+          class="test-result"
+          :class="providerTestResult.ok ? 'test-ok' : 'test-err'"
+        >
+          <template v-if="providerTestResult.ok">
+            ✓ {{ providerTestResult.provider === 'edge' ? 'Edge' : 'OpenAI' }} 连接成功（{{
+              providerTestResult.latencyMs
+            }} ms）：{{ providerTestResult.sampleText || 'ok' }}
+          </template>
+          <template v-else>
+            ✗ {{ providerTestResult.provider === 'edge' ? 'Edge' : 'OpenAI' }} 测试失败（{{
+              providerTestResult.errorCode || 'ERROR'
+            }}）：{{ providerTestResult.errorMessage }}
+          </template>
+        </div>
       </section>
 
       <section class="group">
         <h2 class="group-title">OpenAI 兼容</h2>
+        <div class="row">
+          <label class="label" for="openai-preset">快速预设</label>
+          <div class="inline-actions">
+            <select id="openai-preset" v-model="selectedPresetId" @change="handleApplyPreset">
+              <option value="">选择常用服务商预设（保留当前 API Key）</option>
+              <option v-for="preset in OPENAI_PROVIDER_PRESETS" :key="preset.id" :value="preset.id">
+                {{ preset.label }}
+              </option>
+            </select>
+            <button
+              type="button"
+              :disabled="testingProvider"
+              @click="handleTestProvider('openai')"
+            >
+              {{ testingProvider ? '测试中...' : '测 OpenAI' }}
+            </button>
+          </div>
+        </div>
         <div class="row">
           <label class="label" for="openai-base-url">Base URL</label>
           <div class="stack-cell">
@@ -479,7 +568,7 @@ onUnmounted(() => {
               终端划选自动退格替换
             </label>
             <span class="hint">
-              默认关闭（安全浮窗模式）：在终端划选按 {{ replaceHotkey }} 时先弹出译文预览，按 Enter 安全填入，避免盲发退格误删命令行；开启后将按字形簇自动退格替换（仅 Windows 支持退格注入）。IDE 内置终端推荐直接按 {{ directHotkey }}。
+              默认关闭（安全浮窗模式）：在终端划选按 {{ replaceHotkey }} 时先弹出译文预览，按 Enter 安全填入，避免盲发退格误删命令行；开启后将按字形簇自动退格替换（支持 Windows / macOS 与支持按键注入的 Linux 环境）。IDE 内置终端推荐直接按 {{ directHotkey }}。
             </span>
           </div>
         </div>
@@ -505,6 +594,20 @@ onUnmounted(() => {
               placeholder="例如 my-terminal.exe（逗号分隔）"
             />
             <span class="hint">自定义追加使用 Ctrl+Insert / Shift+Insert 的终端 exe 文件名</span>
+          </div>
+        </div>
+        <div class="row">
+          <label class="label" for="force-popup-exes">防误触强制浮窗</label>
+          <div class="stack-cell">
+            <input
+              id="force-popup-exes"
+              v-model="forcePopupInput"
+              type="text"
+              placeholder="例如 code.exe, cursor.exe（逗号分隔）"
+            />
+            <span class="hint">
+              对列出的进程按 {{ replaceHotkey }} 时绝不发送 Ctrl+C，直接切换为 {{ directHotkey }} 独立输入条（适合关闭了无障碍树的 IDE 内置终端防误杀命令）
+            </span>
           </div>
         </div>
         <div class="row">
@@ -659,6 +762,35 @@ onUnmounted(() => {
 
 .hotkey-cell input {
   flex: 1;
+}
+
+.inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-actions select {
+  flex: 1;
+}
+
+.test-result {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  word-break: break-word;
+  border: 1px solid var(--border);
+}
+
+.test-ok {
+  color: var(--success);
+  background: var(--bg);
+}
+
+.test-err {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: var(--danger);
 }
 
 .hk-status {

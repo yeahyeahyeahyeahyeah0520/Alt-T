@@ -68,6 +68,8 @@ export interface AppConfig {
   customWtExeNames?: string[]
   /** 用户自定义追加到 conhost 类终端的 exe 文件名列表（小写，含 .exe），默认 [] */
   customConhostExeNames?: string[]
+  /** 划词替换（Alt+R）时强制改用独立输入条（不发 Ctrl+C）的进程名列表（小写，含 .exe），默认 [] */
+  forcePopupOnReplaceExes?: string[]
   history: HistoryItem[]
 }
 
@@ -117,6 +119,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   popupHeight: 320,
   customWtExeNames: [],
   customConhostExeNames: [],
+  forcePopupOnReplaceExes: [],
   history: []
 }
 
@@ -185,6 +188,7 @@ export const IPC_CHANNELS = {
   popupPasteToTarget: 'popup:paste-to-target',
   settingsOpen: 'settings:open',
   hotkeyCheck: 'hotkey:check',
+  providerTest: 'provider:test',
   appPing: 'app:ping',
 
   translateChunk: 'translate:chunk',
@@ -229,6 +233,21 @@ export interface HotkeyCheckReply {
   occupied: boolean
 }
 
+export interface ProviderTestArgs {
+  provider: ProviderId
+  openai: OpenAIProviderConfig
+  proxy: ProxyConfig
+}
+
+export interface ProviderTestReply {
+  ok: boolean
+  provider: ProviderId
+  latencyMs: number
+  sampleText?: string
+  errorCode?: TranslateErrorCode
+  errorMessage?: string
+}
+
 export interface TranslateChunkPush {
   requestId: string
   delta: string
@@ -270,6 +289,7 @@ export interface RendererApi {
   popupPasteToTarget(args: PopupPasteArgs): Promise<PopupPasteReply>
   settingsOpen(): Promise<void>
   hotkeyCheck(accelerator: string): Promise<HotkeyCheckReply>
+  providerTest(args: ProviderTestArgs): Promise<ProviderTestReply>
   appPing(): Promise<{ ok: true; ts: number }>
 
   onTranslateChunk(cb: (p: TranslateChunkPush) => void): () => void

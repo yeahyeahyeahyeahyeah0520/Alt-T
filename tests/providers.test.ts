@@ -6,6 +6,7 @@ import { createHttp, mapFetchError } from '../src/main/providers/httpClient'
 import { OpenAICompatibleProvider } from '../src/main/providers/openaiCompatible'
 import { EdgeDirectProvider } from '../src/main/providers/edgeDirect'
 import { translateWithFallback } from '../src/main/providers/fallback'
+import { testProviderDraft } from '../src/main/providers/providerTest'
 import { createTranslateService } from '../src/main/services/translateService'
 import {
   DEFAULT_CONFIG,
@@ -303,6 +304,111 @@ describe('EdgeDirectProvider (local node:http mock)', () => {
         err.info.retryable === true
     )
     assert.equal(requestCount, 0)
+  })
+
+  it('automatically fails over to Edge auth + Cognitive v3 endpoint on HTTP 429 and caches/refreshes Bearer token', async () => {
+    let authCalls = 0
+    let cognitiveCalls = 0
+    let failFirstCognitiveWith401 = false
+    const seenAuthHeaders: string[] = []
+
+    const srv = await startServer(async (req, res) => {
+      const url = req.url ?? ''
+      await readBody(req)
+      if (url.startsWith('/translate/translatetext')) {
+        res.writeHead(429, { 'Content-Type': 'text/plain' })
+        res.end('rate limited')
+        return
+      }
+      if (url === '/translate/auth') {
+        authCalls++
+        res.writeHead(200, { 'Content-Type': 'text/plain' })
+        res.end(`mock-edge-jwt-token-${authCalls}`)
+        return
+      }
+      if (url.startsWith('/cognitive/translate')) {
+        cognitiveCalls++
+        seenAuthHeaders.push(req.headers.authorization ?? '')
+        if (failFirstCognitiveWith401) {
+          failFirstCognitiveWith401 = false
+          res.writeHead(401, { 'Content-Type': 'text/plain' })
+          res.end('token expired')
+          return
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify([{ translations: [{ text: '容灾成功', to: 'zh-Hans' }] }]))
+        return
+      }
+      res.writeHead(404)
+      res.end()
+    })
+    cleanups.push(srv.close)
+
+    const httpClient = createHttp({ getProxy: () => ({ enabled: false, url: '' }) })
+    cleanups.push(() => httpClient.dispose())
+
+    const edge = new EdgeDirectProvider(httpClient, {
+      endpoint: `${srv.url}/translate/translatetext`,
+      authEndpoint: `${srv.url}/translate/auth`,
+      cognitiveEndpoint: `${srv.url}/cognitive/translate`
+    })
+
+    // First call triggers auth fetch + cognitive success
+    const out1 = await edge.translate({ text: 'hello', to: 'zh-Hans' })
+    assert.equal(out1, '容灾成功')
+    assert.equal(authCalls, 1)
+    assert.equal(cognitiveCalls, 1)
+
+    // Second call reuses cached token without calling /auth again
+    const out2 = await edge.translate({ text: 'world', to: 'zh-Hans' })
+    assert.equal(out2, '容灾成功')
+    assert.equal(authCalls, 1)
+    assert.equal(cognitiveCalls, 2)
+
+    // Third call simulates stale token 401 -> refreshes token once and succeeds
+    failFirstCognitiveWith401 = true
+    const out3 = await edge.translate({ text: 'retry', to: 'zh-Hans' })
+    assert.equal(out3, '容灾成功')
+    assert.equal(authCalls, 2)
+    assert.equal(seenAuthHeaders[seenAuthHeaders.length - 1], 'Bearer mock-edge-jwt-token-2')
+  })
+})
+
+describe('testProviderDraft (isolated Settings connection test)', () => {
+  it('verifies unsaved OpenAI draft against local server and redacts apiKey on errors', async () => {
+    const secret = 'fp-draft-secret-777'
+    let failMode = false
+    const srv = await startServer(async (req, res) => {
+      await readBody(req)
+      if (failMode) {
+        res.writeHead(401, { 'Content-Type': 'text/plain' })
+        res.end(`invalid key ${secret}`)
+        return
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ choices: [{ message: { content: '你好' } }] }))
+    })
+    cleanups.push(srv.close)
+
+    const okReply = await testProviderDraft({
+      provider: 'openai',
+      openai: makeOpenAICfg(srv.url, { apiKey: secret }),
+      proxy: { enabled: false, url: '' }
+    })
+    assert.equal(okReply.ok, true)
+    assert.equal(okReply.provider, 'openai')
+    assert.equal(okReply.sampleText, '你好')
+    assert.ok(okReply.latencyMs >= 1)
+
+    failMode = true
+    const errReply = await testProviderDraft({
+      provider: 'openai',
+      openai: makeOpenAICfg(srv.url, { apiKey: secret }),
+      proxy: { enabled: false, url: '' }
+    })
+    assert.equal(errReply.ok, false)
+    assert.equal(errReply.errorCode, 'HTTP')
+    assert.equal(errReply.errorMessage?.includes(secret), false)
   })
 })
 

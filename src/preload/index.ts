@@ -12,6 +12,8 @@ import {
   type PopupPasteArgs,
   type PopupPasteReply,
   type PopupShowPush,
+  type ProviderTestArgs,
+  type ProviderTestReply,
   type RendererApi,
   type TranslateChunkPush,
   type TranslateDonePush,
@@ -88,6 +90,18 @@ const api: RendererApi = {
       IPC_CHANNELS.hotkeyCheck,
       () => ({ valid: isValidGlobalAccelerator(accelerator), occupied: false }),
       { accelerator }
+    ),
+  providerTest: (args: ProviderTestArgs): Promise<ProviderTestReply> =>
+    invokeWithFallback<ProviderTestReply>(
+      IPC_CHANNELS.providerTest,
+      () => ({
+        ok: false,
+        provider: args.provider,
+        latencyMs: 0,
+        errorCode: 'UNSUPPORTED',
+        errorMessage: MSG.MAIN_OUTDATED
+      }),
+      args
     ),
   appPing: (): Promise<{ ok: true; ts: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.appPing) as Promise<{ ok: true; ts: number }>,

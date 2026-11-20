@@ -42,6 +42,7 @@ import {
   getActiveTargetHandle,
   getClipboardSequenceNumber,
   getTargetCopyKind,
+  getTargetExeName,
   getTargetPasteKind,
   getWindowTitle,
   isOwnProcessWindow,
@@ -81,6 +82,7 @@ export interface SelectionRuntimeDeps {
     getActiveTargetHandle: () => number
     getClipboardSequenceNumber: () => number
     getTargetCopyKind: (handle: number, customSets?: CustomTerminalExeSets) => WindowInputKind
+    getTargetExeName?: (handle: number) => string
     getTargetPasteKind: (handle: number, customSets?: CustomTerminalExeSets) => WindowInputKind
     getWindowTitle: (handle: number) => string
     isOwnProcessWindow: (handle: number) => boolean
@@ -155,6 +157,7 @@ function getRuntime(): SelectionRuntimeDeps {
       getActiveTargetHandle,
       getClipboardSequenceNumber,
       getTargetCopyKind,
+      getTargetExeName,
       getTargetPasteKind,
       getWindowTitle,
       isOwnProcessWindow,
@@ -194,6 +197,18 @@ function buildCustomExeSets(cfg: AppConfig): CustomTerminalExeSets {
     extraWt: new Set((cfg.customWtExeNames ?? []).map((s) => s.toLowerCase())),
     extraConhost: new Set((cfg.customConhostExeNames ?? []).map((s) => s.toLowerCase()))
   }
+}
+
+function shouldForcePopupOnReplace(
+  handle: number,
+  rt: SelectionRuntimeDeps,
+  cfg: AppConfig
+): boolean {
+  const list = cfg.forcePopupOnReplaceExes
+  if (!list || list.length === 0) return false
+  const exeName = (rt.host.getTargetExeName?.(handle) ?? '').trim().toLowerCase()
+  if (exeName === '') return false
+  return list.some((item) => item.trim().toLowerCase() === exeName)
 }
 
 function recordHistory(
@@ -831,6 +846,21 @@ export async function runSelectionFlow(
     }
 
     const cfg = rt.configStore.get()
+
+    if (mode === 'replace' && shouldForcePopupOnReplace(handle0, rt, cfg)) {
+      if (deps?.openDirectInput) {
+        deps.openDirectInput(handle0)
+        if (deps.notifyPopup) {
+          deps.notifyPopup({ level: 'info', message: MSG.FORCE_POPUP_REPLACE_REDIRECT })
+        } else {
+          rt.notifySystem(MSG.FORCE_POPUP_REPLACE_REDIRECT)
+        }
+        return 'done'
+      }
+      rt.notifySystem(MSG.FORCE_POPUP_REPLACE_REDIRECT)
+      return 'no-selection'
+    }
+
     const capture = await captureSelectionText(handle0, rt, cfg, mode)
     if (!capture.ok) {
       switch (capture.reason) {
