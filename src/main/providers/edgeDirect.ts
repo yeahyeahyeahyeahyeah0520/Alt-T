@@ -1,3 +1,10 @@
+import { isRecord } from '../../shared/config'
+import {
+  ProviderError,
+  type ProviderId,
+  type ProviderRequest,
+  type TranslateProvider
+} from '../../shared/types'
 import {
   createLinkedAbort,
   mapFetchError,
@@ -5,12 +12,6 @@ import {
   TimeoutMarker,
   type HttpClient
 } from './httpClient'
-import {
-  ProviderError,
-  type ProviderId,
-  type ProviderRequest,
-  type TranslateProvider
-} from './types'
 
 const DEFAULT_EDGE_ENDPOINT = 'https://edge.microsoft.com/translate/translatetext'
 const DEFAULT_EDGE_TIMEOUT_MS = 8000
@@ -18,10 +19,6 @@ const DEFAULT_EDGE_TIMEOUT_MS = 8000
 export interface EdgeProviderOptions {
   endpoint?: string
   timeoutMs?: number
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 function extractEdgeText(json: unknown): string {
@@ -115,7 +112,8 @@ export class EdgeDirectProvider implements TranslateProvider {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify([req.text]),
-        signal: controller.signal
+        signal: controller.signal,
+        provider: this.id
       })
 
       if (!res.ok) {

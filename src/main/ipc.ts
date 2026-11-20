@@ -6,9 +6,11 @@ import {
   type IpcMainInvokeEvent,
   type WebContents
 } from 'electron'
-import { isTargetLang } from '../shared/config'
+import { createHistoryEntry, HOTKEY_KEYS, isRecord, isTargetLang } from '../shared/config'
+import { MSG } from '../shared/messages'
 import {
   IPC_CHANNELS,
+  MAX_TRANSLATE_CHARS,
   ProviderError,
   type AppConfig,
   type ConfigSetReply,
@@ -16,6 +18,8 @@ import {
   type HotkeyCheckReply,
   type HotkeyConfig,
   type PopupPasteReply,
+  type ProviderId,
+  type TargetLang,
   type TranslateChunkPush,
   type TranslateDonePush,
   type TranslateErrorInfo,
@@ -26,19 +30,19 @@ import {
 import type { TranslateService } from './services/translateService'
 import type { PopupWindowController } from './windows/popupWindow'
 
-const MAX_TRANSLATE_TEXT_LENGTH = 5000
 const MAX_IPC_TEXT_LENGTH = 50000
 
 export interface IpcDeps {
   configStore: {
     get: () => AppConfig
     set: (next: unknown) => AppConfig
-    addHistory: (item: HistoryItem) => void
-    clearHistory: () => void
+    addHistory: (item: HistoryItem) => AppConfig | null | void
+    clearHistory: () => AppConfig | void
   }
   translateService: TranslateService
   hotkeyService: {
     registerAll: (cfg: HotkeyConfig) => Array<{ key: keyof HotkeyConfig; accelerator: string }>
+    verifyHotkeys: () => { ok: boolean; missing: string[] }
     checkHotkey: (accelerator: string) => HotkeyCheckReply
   }
   popupWindow: PopupWindowController
@@ -46,17 +50,12 @@ export interface IpcDeps {
     rebuildMenu: () => void
   }
   openSettingsWindow: () => void
-  validatePastePreconditions: (targetHandle: number, text: string) => PopupPasteReply | null
   pasteToTargetWindow: (
     targetHandle: number,
     text: string,
-    hidePopup?: (() => void) | boolean
+    hidePopup?: () => void
   ) => Promise<PopupPasteReply>
   syncAutoLaunch?: (enabled: boolean) => void
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 function badArgsError(channel: string): Error {
@@ -111,7 +110,7 @@ function validateRequestIdArg(raw: unknown, channel: string): string {
   return raw.requestId
 }
 
-function broadcastConfigChanged(cfg: AppConfig): void {
+export function broadcastConfigChanged(cfg: AppConfig): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
       win.webContents.send(IPC_CHANNELS.configChanged, cfg)
@@ -126,7 +125,6 @@ function pushToWebContents(sender: WebContents, channel: string, payload: unknow
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  const nonStreamControllers = new Map<string, AbortController>()
   const cancelledIds = new Set<string>()
 
   function markCancelled(requestId: string): void {
@@ -139,22 +137,25 @@ export function registerIpc(deps: IpcDeps): void {
     }
   }
 
-  function recordHistoryIfEnabled(
+  function recordHistoryAndBroadcast(
     fromText: string,
     toText: string,
-    provider: 'openai' | 'edge',
-    target: 'en' | 'zh-Hans'
+    provider: ProviderId,
+    target: TargetLang
   ): void {
-    const cfg = deps.configStore.get()
-    if (!cfg.historyEnabled) return
-    deps.configStore.addHistory({
-      id: crypto.randomUUID(),
-      at: Date.now(),
-      from: fromText.slice(0, 2000),
-      to: toText.slice(0, 4000),
-      provider,
-      target
-    })
+    const updated = deps.configStore.addHistory(
+      createHistoryEntry({
+        id: crypto.randomUUID(),
+        at: Date.now(),
+        from: fromText,
+        to: toText,
+        provider,
+        target
+      })
+    )
+    if (updated) {
+      broadcastConfigChanged(updated)
+    }
   }
 
   const allInvokeChannels = [
@@ -191,26 +192,38 @@ export function registerIpc(deps: IpcDeps): void {
     if (!isRecord(raw) || !isRecord(raw.config)) {
       throw badArgsError(IPC_CHANNELS.configSet)
     }
+    const prev = deps.configStore.get()
     const saved = deps.configStore.set(raw.config)
-    const hotkeyConflicts = deps.hotkeyService.registerAll(saved.hotkeys)
-    deps.syncAutoLaunch?.(saved.autoLaunch)
-    deps.tray.rebuildMenu()
+
+    const hotkeysChanged = HOTKEY_KEYS.some((k) => prev.hotkeys[k] !== saved.hotkeys[k])
+    const needsHotkeyRegister = hotkeysChanged || !deps.hotkeyService.verifyHotkeys().ok
+    const hotkeyConflicts = needsHotkeyRegister
+      ? deps.hotkeyService.registerAll(saved.hotkeys)
+      : []
+
+    const autoLaunchChanged = prev.autoLaunch !== saved.autoLaunch
+    if (autoLaunchChanged) {
+      deps.syncAutoLaunch?.(saved.autoLaunch)
+    }
+    if (autoLaunchChanged || hotkeysChanged) {
+      deps.tray.rebuildMenu()
+    }
     broadcastConfigChanged(saved)
     return { ok: true, hotkeyConflicts }
   })
 
   ipcMain.handle(IPC_CHANNELS.historyClear, (event) => {
     assertTrustedSender(event, IPC_CHANNELS.historyClear)
-    deps.configStore.clearHistory()
-    broadcastConfigChanged(deps.configStore.get())
+    const updated = deps.configStore.clearHistory()
+    broadcastConfigChanged(updated ?? deps.configStore.get())
   })
 
-  ipcMain.handle(IPC_CHANNELS.clipboardWrite, async (event, raw: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.clipboardWrite, (event, raw: unknown) => {
     assertTrustedSender(event, IPC_CHANNELS.clipboardWrite)
     if (!isRecord(raw) || typeof raw.text !== 'string' || raw.text.length > MAX_IPC_TEXT_LENGTH) {
       throw badArgsError(IPC_CHANNELS.clipboardWrite)
     }
-    await clipboard.writeText(raw.text)
+    clipboard.writeText(raw.text)
   })
 
   ipcMain.handle(IPC_CHANNELS.popupPin, (event, raw: unknown): boolean => {
@@ -242,13 +255,14 @@ export function registerIpc(deps: IpcDeps): void {
         throw badArgsError(IPC_CHANNELS.popupPasteToTarget)
       }
       const targetHandle = deps.popupWindow.getLastTargetHandle()
-      const preError = deps.validatePastePreconditions(targetHandle, raw.text)
-      if (preError !== null) {
-        return preError
+      deps.popupWindow.setPasting(true)
+      try {
+        return await deps.pasteToTargetWindow(targetHandle, raw.text, () => {
+          deps.popupWindow.hide()
+        })
+      } finally {
+        deps.popupWindow.setPasting(false)
       }
-      return deps.pasteToTargetWindow(targetHandle, raw.text, () => {
-        deps.popupWindow.hide()
-      })
     }
   )
 
@@ -275,13 +289,13 @@ export function registerIpc(deps: IpcDeps): void {
     const { requestId, text, to, stream } = args
     const sender = event.sender
 
-    if (text.length > MAX_TRANSLATE_TEXT_LENGTH) {
+    if (text.length > MAX_TRANSLATE_CHARS) {
       const payload: TranslateErrorPush = {
         requestId,
         error: {
           code: 'PARSE',
           provider: deps.configStore.get().primaryProvider,
-          message: `文本超过 ${MAX_TRANSLATE_TEXT_LENGTH} 字符上限`,
+          message: MSG.TEXT_TOO_LONG,
           retryable: false
         }
       }
@@ -292,11 +306,6 @@ export function registerIpc(deps: IpcDeps): void {
     }
 
     cancelledIds.delete(requestId)
-    const prevAc = nonStreamControllers.get(requestId)
-    if (prevAc) {
-      nonStreamControllers.delete(requestId)
-      prevAc.abort()
-    }
     deps.translateService.cancel(requestId)
     deps.popupWindow.beginTranslation(requestId)
 
@@ -315,7 +324,7 @@ export function registerIpc(deps: IpcDeps): void {
             if (cancelledIds.has(requestId)) return
             const payload: TranslateDonePush = { requestId, result }
             pushToWebContents(sender, IPC_CHANNELS.translateDone, payload)
-            recordHistoryIfEnabled(text, result.text, result.provider, to)
+            recordHistoryAndBroadcast(text, result.text, result.provider, to)
           },
           onError: (error) => {
             deps.popupWindow.endTranslation(requestId)
@@ -328,23 +337,20 @@ export function registerIpc(deps: IpcDeps): void {
       return { accepted: true }
     }
 
-    const ac = new AbortController()
-    nonStreamControllers.set(requestId, ac)
-
     void deps.translateService
-      .translateOnce({ text, to }, ac.signal)
+      .translateOnce({ text, to }, undefined, requestId)
       .then((result) => {
-        const wasActive = nonStreamControllers.delete(requestId)
         deps.popupWindow.endTranslation(requestId)
-        if (!wasActive || ac.signal.aborted || cancelledIds.has(requestId)) return
+        if (cancelledIds.has(requestId)) return
         const payload: TranslateDonePush = { requestId, result }
         pushToWebContents(sender, IPC_CHANNELS.translateDone, payload)
-        recordHistoryIfEnabled(text, result.text, result.provider, to)
+        recordHistoryAndBroadcast(text, result.text, result.provider, to)
       })
       .catch((err: unknown) => {
-        const wasActive = nonStreamControllers.delete(requestId)
         deps.popupWindow.endTranslation(requestId)
-        if (!wasActive || ac.signal.aborted || cancelledIds.has(requestId)) return
+        if (cancelledIds.has(requestId) || (err instanceof ProviderError && err.info.code === 'ABORTED')) {
+          return
+        }
 
         const provider = deps.configStore.get().primaryProvider
         const info: TranslateErrorInfo =
@@ -368,11 +374,6 @@ export function registerIpc(deps: IpcDeps): void {
     assertTrustedSender(event, IPC_CHANNELS.translateCancel)
     const requestId = validateRequestIdArg(raw, IPC_CHANNELS.translateCancel)
     markCancelled(requestId)
-    const ac = nonStreamControllers.get(requestId)
-    if (ac) {
-      nonStreamControllers.delete(requestId)
-      ac.abort()
-    }
     deps.translateService.cancel(requestId)
     deps.popupWindow.endTranslation(requestId)
   })

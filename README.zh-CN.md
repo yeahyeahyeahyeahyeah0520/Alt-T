@@ -4,8 +4,8 @@
 
 > 轻量、经工程级加固的 Windows 桌面悬浮翻译与 **单键 `Enter` 终端提示词直填工具** —— 基于 Electron 45、Vue 3、`koffi` Win32 `SendInput` 与 `undici` 构建，专为 `Claude Code`、`Codex`、`Antigravity`、`Gemini CLI`、`PowerShell`、`SSH` 等开发者命令行工作流打造。
 
-[![CI](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/ci.yml)
-[![Release](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/release.yml)
+[![CI](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/ci.yml)
+[![Release](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-4F46E5.svg)](./LICENSE)
 [![OS: Windows | macOS | Linux](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-0078D4.svg)](#跨操作系统支持矩阵)
 [![Zero node-gyp](https://img.shields.io/badge/Native%20Deps-Zero%20node--gyp-success.svg)](#构建与打包)
@@ -94,13 +94,14 @@ Alt-T 通过 `OpenProcessToken` + `GetTokenInformation(TokenIntegrityLevel = 25)
   }
   ```
 - **远端接口拦截**：非回环地址若 `apiKey` 为空，会在本地直接抛出 `CONFIG` 错误（`OpenAI API key is empty`），不会向外网发起无效请求。
+- **自定义终端白名单**：可在设置页直接配置（或编辑 `config.json` 中的 `customWtExeNames` / `customConhostExeNames`），为第三方终端指定 `Ctrl+Shift+V` 或 `Shift+Insert` 热键协议，修改即刻生效。
 - **剪贴板备份范围**：取词/替换期间仅备份与恢复 `text/plain`、`text/html`、`text/rtf` 与位图 `image/*`；文件列表（`CF_HDROP`）等非文本/图片格式不在备份范围内。
 
 ---
 
 ## 静默启动与 7×24 看门狗（Windows）
 
-仓库根目录的 `.vbs` 脚本均采用纯 7 位 ASCII（无 BOM），启动前会自动清除 `ELECTRON_RUN_AS_NODE`、`TTL_SMOKE` 与 `FP_SMOKE` 环境变量并校验 `electron.exe` 与 `out\main\index.js`：
+仓库根目录的 `.vbs` 脚本均采用纯 7 位 ASCII（无 BOM），启动前会自动清除 `ELECTRON_RUN_AS_NODE` 与 `FP_SMOKE` 环境变量并校验 `electron.exe` 与 `out\main\index.js`：
 
 ```powershell
 # 无黑框静默启动到系统托盘

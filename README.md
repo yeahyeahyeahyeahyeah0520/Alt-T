@@ -4,8 +4,8 @@
 
 > A lightweight, hardened Windows desktop translator & **one-key `Enter`-to-Terminal prompt injector** built with Electron 45, Vue 3, `koffi` Win32 `SendInput`, and `undici` — crafted for AI coding CLIs (`Claude Code`, `Codex`, `Antigravity`, `Gemini CLI`, `PowerShell`, `SSH`) and everyday developer workflows.
 
-[![CI](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/ci.yml)
-[![Release](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/alt-t/actions/workflows/release.yml)
+[![CI](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/ci.yml)
+[![Release](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-4F46E5.svg)](./LICENSE)
 [![OS: Windows | macOS | Linux](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-0078D4.svg)](#cross-platform-support-matrix)
 [![Zero node-gyp](https://img.shields.io/badge/Native%20Deps-Zero%20node--gyp-success.svg)](#build--packaging)
@@ -94,13 +94,14 @@ On first run, Alt-T initializes `config.json` in your user data directory (e.g.,
   }
   ```
 - **Remote Endpoints**: Any non-loopback `baseUrl` with an empty `apiKey` fails fast locally with error code `CONFIG` (`OpenAI API key is empty`) without sending any network request.
+- **Custom Terminal Exe Whitelist**: Add custom terminal `.exe` names in Settings (or `customWtExeNames` / `customConhostExeNames` in `config.json`) to route extra terminals to `Ctrl+Shift+V` or `Shift+Insert` without modifying source code.
 - **Clipboard Format Scope**: During selection capture and paste, Alt-T backs up and restores `text/plain`, `text/html`, `text/rtf`, and `image/*`. Non-text/image OS formats such as file drops (`CF_HDROP`) are not backed up.
 
 ---
 
 ## Silent Launcher & 24/7 Watchdog (Windows)
 
-Both `.vbs` scripts are pure 7-bit ASCII (no BOM), strip `ELECTRON_RUN_AS_NODE`, `TTL_SMOKE`, and `FP_SMOKE`, verify `electron.exe` and `out\main\index.js`, and run from the repository root:
+Both `.vbs` scripts are pure 7-bit ASCII (no BOM), strip `ELECTRON_RUN_AS_NODE` and `FP_SMOKE`, verify `electron.exe` and `out\main\index.js`, and run from the repository root:
 
 ```powershell
 # Launch silently into the system tray (no console window)

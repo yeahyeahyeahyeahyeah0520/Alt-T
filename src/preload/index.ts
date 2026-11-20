@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { isValidGlobalAccelerator, mergeConfig } from '../shared/config'
+import { MSG } from '../shared/messages'
 import {
   DEFAULT_CONFIG,
   IPC_CHANNELS,
@@ -77,7 +78,7 @@ const api: RendererApi = {
   popupPasteToTarget: (args: PopupPasteArgs): Promise<PopupPasteReply> =>
     invokeWithFallback<PopupPasteReply>(
       IPC_CHANNELS.popupPasteToTarget,
-      () => ({ ok: false, message: '主进程版本过旧，请重启应用以启用该功能' }),
+      () => ({ ok: false, message: MSG.MAIN_OUTDATED }),
       args
     ),
   settingsOpen: (): Promise<void> =>
@@ -89,10 +90,7 @@ const api: RendererApi = {
       { accelerator }
     ),
   appPing: (): Promise<{ ok: true; ts: number }> =>
-    invokeWithFallback<{ ok: true; ts: number }>(IPC_CHANNELS.appPing, () => ({
-      ok: true,
-      ts: Date.now()
-    })),
+    ipcRenderer.invoke(IPC_CHANNELS.appPing) as Promise<{ ok: true; ts: number }>,
 
   onTranslateChunk: (cb: (p: TranslateChunkPush) => void): (() => void) =>
     subscribe<TranslateChunkPush>(IPC_CHANNELS.translateChunk, cb),

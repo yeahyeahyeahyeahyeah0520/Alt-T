@@ -30,17 +30,33 @@ export const MSG = {
   COPY_SHORTCUT_FAILED: '发送复制快捷键失败',
   NO_TEXT_SELECTED: '选中内容不是文本',
   TEXT_TOO_LONG: '文本超过 5000 字符',
+  TRANSLATE_TIMEOUT: '翻译请求超时，请重试',
+  POPUP_BLUR_PASTE_CANCELLED: '窗口已失焦，已取消自动填入；翻译完成后可手动点击“填入窗口”',
 
   // --- 平台 / 系统 ---
   PLATFORM_NO_INJECT: '当前桌面环境不支持跨窗按键取词，请使用 Alt+T 输入翻译',
   SERVICE_NOT_INIT: '翻译服务未初始化',
+  MAIN_OUTDATED: '主进程版本过旧，请重启应用以启用该功能',
+  UNCAUGHT_ERROR_TITLE: 'Alt-T 错误',
 
   // --- macOS 专用 ---
-  MACOS_ACCESSIBILITY_DENIED_COPY: '请在系统设置 → 辅助功能 中授权 FlashPrompt',
+  MACOS_ACCESSIBILITY_DENIED_COPY: '请在系统设置 → 辅助功能 中授权 Alt-T',
   MACOS_ACCESSIBILITY_DENIED_PASTE: '未授予系统辅助功能权限，译文已复制到剪贴板，请按 Cmd+V 粘贴',
 
   // --- 终端专用 ---
-  TERMINAL_SELECTION_TRANSLATED: '终端选区已译好：按 Enter 直接填入命令行，按 Esc 关闭'
-} as const
+  TERMINAL_SELECTION_TRANSLATED: '终端选区已译好：按 Enter 直接填入命令行，按 Esc 关闭',
 
-export type MsgKey = keyof typeof MSG
+  // --- 动态格式消息 ---
+  inputTooLong: (maxChars: number): string => `输入文本超过 ${maxChars} 字符上限`,
+  inputTruncated: (maxChars: number): string => `输入已截断至 ${maxChars} 字符上限`,
+  uncaughtErrorBody: (safeMsg: string): string =>
+    `发生未捕获异常: ${safeMsg}\n请查看日志或重启 Alt-T`,
+  hotkeyConflictSummary: (summary: string): string =>
+    `以下快捷键注册冲突（将自动重试）：${summary}`,
+  formatFallbackFailure: (
+    primary: string,
+    primaryMsg: string,
+    secondary: string,
+    secondaryMsg: string
+  ): string => `主源(${primary}): ${primaryMsg}; 备用源(${secondary}): ${secondaryMsg}`
+} as const

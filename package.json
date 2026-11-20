@@ -4,14 +4,15 @@
   "version": "0.1.0",
   "private": false,
   "license": "MIT",
+  "author": "yeahyeahyeahyeahyeah0520",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yeahyeahyeahyeahyeah0520/alt-t.git"
+    "url": "git+https://github.com/yeahyeahyeahyeahyeah0520/flashprompt.git"
   },
   "bugs": {
-    "url": "https://github.com/yeahyeahyeahyeahyeah0520/alt-t/issues"
+    "url": "https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/issues"
   },
-  "homepage": "https://github.com/yeahyeahyeahyeahyeah0520/alt-t#readme",
+  "homepage": "https://github.com/yeahyeahyeahyeahyeah0520/flashprompt#readme",
   "description": "Pure, lightweight floating prompt translator & one-key Enter-to-Terminal injector for AI coding CLIs (Claude Code, Codex, Antigravity, Terminal)",
   "keywords": [
     "alt-t",
@@ -38,21 +39,53 @@
     "check": "node scripts/check-rules.mjs",
     "test": "node --import tsx --test \"tests/**/*.test.ts\"",
     "smoke": "node scripts/smoke-launch.mjs",
-    "verify": "npm run typecheck && npm run check && npm test && electron-vite build && npm run smoke"
+    "verify": "npm run typecheck && npm run check && npm test && electron-vite build && npm run smoke",
+    "dist:win": "npm run build && electron-builder --win nsis portable --publish never"
   },
   "dependencies": {
     "koffi": "2.16.4",
     "undici": "7.30.2"
   },
   "devDependencies": {
+    "@electron/fuses": "^2.1.3",
     "@types/node": "22.20.5",
     "@vitejs/plugin-vue": "6.0.11",
     "electron": "45.3.3",
+    "electron-builder": "^26.18.0",
     "electron-vite": "6.0.0",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "vite": "8.3.8",
     "vue": "3.5.45",
     "vue-tsc": "3.3.14"
+  },
+  "build": {
+    "appId": "com.alt-t.app",
+    "productName": "Alt-T",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "afterPack": "./scripts/after-pack.mjs",
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Alt-T",
+      "artifactName": "Alt-T-${version}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "Alt-T-${version}-portable.${ext}"
+    }
   }
 }

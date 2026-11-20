@@ -21,7 +21,6 @@ End If
 Set shell = CreateObject("WScript.Shell")
 On Error Resume Next
 shell.Environment("PROCESS").Remove "ELECTRON_RUN_AS_NODE"
-shell.Environment("PROCESS").Remove "TTL_SMOKE"
 shell.Environment("PROCESS").Remove "FP_SMOKE"
 On Error GoTo 0
 shell.CurrentDirectory = rootDir
@@ -32,19 +31,9 @@ maxBackoffMs = 60000
 stableThresholdSec = 30
 
 Function HasCleanExitFlag(fsObj, baseAppData)
-    Dim candidates(3)
-    Dim i
-    candidates(0) = baseAppData & "\Alt-T\clean-exit.flag"
-    candidates(1) = baseAppData & "\TTime Lite\clean-exit.flag"
-    candidates(2) = baseAppData & "\ttime-lite\clean-exit.flag"
-    candidates(3) = baseAppData & "\TTime Lite\intentional-quit.flag"
-    HasCleanExitFlag = False
-    For i = 0 To UBound(candidates)
-        If fsObj.FileExists(candidates(i)) Then
-            HasCleanExitFlag = True
-            Exit Function
-        End If
-    Next
+    Dim flagPath
+    flagPath = baseAppData & "\Alt-T\clean-exit.flag"
+    HasCleanExitFlag = fsObj.FileExists(flagPath)
 End Function
 
 Do

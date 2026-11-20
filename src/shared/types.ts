@@ -3,6 +3,8 @@ export type TargetLang = 'en' | 'zh-Hans'
 export type ProviderId = 'openai' | 'edge'
 export type PopupMode = 'input' | 'selection'
 
+export const MAX_TRANSLATE_CHARS = 5000
+
 // ===================== Configuration =====================
 export interface HotkeyConfig {
   /** Capture selection + auto target language + replace in-place */
@@ -192,8 +194,6 @@ export const IPC_CHANNELS = {
   notify: 'notify:toast',
   configChanged: 'config:changed'
 } as const
-
-export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
 
 export interface TranslateStartArgs {
   requestId: string

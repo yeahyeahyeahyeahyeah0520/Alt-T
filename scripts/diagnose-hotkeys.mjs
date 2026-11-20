@@ -105,7 +105,7 @@ if (!isElectronRuntime) {
 
   const appDataDir = app.getPath('appData')
   if (!probeHotkeys) {
-    app.setPath('userData', path.join(os.tmpdir(), 'fp-diag'))
+    app.setPath('userData', path.join(os.tmpdir(), 'alt-t-diag'))
   }
 
   const HOTKEYS = {
@@ -116,12 +116,12 @@ if (!isElectronRuntime) {
   }
 
   app.whenReady().then(() => {
-    console.log('[fp] === Alt-T Diagnostics ===')
+    console.log('[alt-t] === Alt-T Diagnostics ===')
     console.log(
-      `[fp] Platform: ${os.platform()} ${os.arch()} | Electron: ${process.versions.electron} | Node: ${process.versions.node}`
+      `[alt-t] Platform: ${os.platform()} ${os.arch()} | Electron: ${process.versions.electron} | Node: ${process.versions.node}`
     )
 
-    const userDataCandidates = ['Alt-T', 'TTime Lite', 'ttime-lite']
+    const userDataCandidates = ['Alt-T']
     let detectedLocks = 0
     let loadedHotkeys = null
 
@@ -133,13 +133,13 @@ if (!isElectronRuntime) {
       if (locks.length > 0) {
         detectedLocks += locks.length
         const summary = locks.map((l) => `${l.name}(${l.kind})`).join(', ')
-        console.log(`[fp] Lock probe (${dirName}): ${summary} [read-only]`)
+        console.log(`[alt-t] Lock probe (${dirName}): ${summary} [read-only]`)
       }
 
       const cfgPath = path.join(candidateDir, 'config.json')
       const summary = readConfigSummaryReadOnly(cfgPath)
       if (summary !== null) {
-        console.log(`[fp] Config (${dirName}/config.json): ${JSON.stringify(summary)}`)
+        console.log(`[alt-t] Config (${dirName}/config.json): ${JSON.stringify(summary)}`)
         if (!loadedHotkeys && summary.hotkeys) {
           loadedHotkeys = summary.hotkeys
         }
@@ -147,7 +147,7 @@ if (!isElectronRuntime) {
     }
 
     if (detectedLocks === 0) {
-      console.log('[fp] Lock probe: no SingletonLock/lockfile present (read-only)')
+      console.log('[alt-t] Lock probe: no SingletonLock/lockfile present (read-only)')
     }
 
     if (os.platform() === 'win32') {
@@ -156,16 +156,16 @@ if (!isElectronRuntime) {
         const user32 = koffi.load('user32.dll')
         const GetForegroundWindow = user32.func('intptr_t __stdcall GetForegroundWindow()')
         const hwnd = Number(GetForegroundWindow())
-        console.log(`[fp] Win32 koffi OK | Foreground HWND=${hwnd}`)
+        console.log(`[alt-t] Win32 koffi OK | Foreground HWND=${hwnd}`)
       } catch (err) {
-        console.error('[fp] Win32 koffi check failed:', err)
+        console.error('[alt-t] Win32 koffi check failed:', err)
         app.exit(1)
         return
       }
     }
 
     if (!probeHotkeys) {
-      console.log('[fp] Skipping hotkey registration probe to protect any live running instance.')
+      console.log('[alt-t] Skipping hotkey registration probe to protect any live running instance.')
       app.exit(0)
       return
     }
@@ -180,11 +180,11 @@ if (!isElectronRuntime) {
     for (const [name, accel] of Object.entries(hotkeysToProbe)) {
       try {
         const ok = globalShortcut.register(accel, () => {
-          console.log(`[fp] HOTKEY FIRED: ${name} (${accel})`)
+          console.log(`[alt-t] HOTKEY FIRED: ${name} (${accel})`)
         })
-        console.log(`[fp] ${name} (${accel}): ${ok ? 'AVAILABLE' : 'OCCUPIED'}`)
+        console.log(`[alt-t] ${name} (${accel}): ${ok ? 'AVAILABLE' : 'OCCUPIED'}`)
       } catch (err) {
-        console.error(`[fp] ${name} (${accel}) threw:`, err)
+        console.error(`[alt-t] ${name} (${accel}) threw:`, err)
       }
     }
 

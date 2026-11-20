@@ -17,27 +17,22 @@ export interface TrayController {
 }
 
 /**
- * Render a crisp BGRA rounded badge with a bold white 'F' glyph at `size x size` pixels.
+ * Render a crisp BGRA rounded badge with a bold white 'T' glyph at `size x size` pixels.
  */
 function renderBrandBitmap(size: number): Buffer {
   const buf = Buffer.alloc(size * size * 4)
   const radius = Math.max(2, Math.round(size * 0.22))
 
-  const xStem0 = Math.round(size * 0.22)
-  const stemW = Math.max(2, Math.round(size * 0.16))
-  const xStem1 = xStem0 + stemW
-
   const yTop0 = Math.round(size * 0.22)
-  const barH = Math.max(2, Math.round(size * 0.14))
+  const barH = Math.max(2, Math.round(size * 0.16))
   const yTop1 = yTop0 + barH
-  const yBottom = size - Math.round(size * 0.22)
+  const xBar0 = Math.round(size * 0.2)
+  const xBar1 = size - Math.round(size * 0.2)
 
-  const xTopBar1 = size - Math.round(size * 0.22)
-
-  const yMid0 = Math.round(size * 0.46)
-  const midH = Math.max(1, Math.round(size * 0.12))
-  const yMid1 = yMid0 + midH
-  const xMidBar1 = size - Math.round(size * 0.35)
+  const stemW = Math.max(2, Math.round(size * 0.18))
+  const xStem0 = Math.round((size - stemW) / 2)
+  const xStem1 = xStem0 + stemW
+  const yBottom = size - Math.round(size * 0.2)
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
@@ -49,10 +44,9 @@ function renderBrandBitmap(size: number): Buffer {
       }
 
       const edgeAlpha = dist <= radius - 0.5 ? 1 : Math.max(0, Math.min(1, radius + 0.5 - dist))
+      const inTopBar = x >= xBar0 && x < xBar1 && y >= yTop0 && y < yTop1
       const inStem = x >= xStem0 && x < xStem1 && y >= yTop0 && y < yBottom
-      const inTopBar = x >= xStem0 && x < xTopBar1 && y >= yTop0 && y < yTop1
-      const inMidBar = x >= xStem0 && x < xMidBar1 && y >= yMid0 && y < yMid1
-      const isGlyph = inStem || inTopBar || inMidBar
+      const isGlyph = inTopBar || inStem
 
       const idx = (y * size + x) * 4
       if (isGlyph) {

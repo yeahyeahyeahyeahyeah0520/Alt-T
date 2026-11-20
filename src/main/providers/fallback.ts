@@ -1,3 +1,4 @@
+import { MSG } from '../../shared/messages'
 import {
   ProviderError,
   type ProviderId,
@@ -5,7 +6,7 @@ import {
   type TranslateErrorInfo,
   type TranslateProvider,
   type TranslateResult
-} from './types'
+} from '../../shared/types'
 
 export interface FallbackDeps {
   providers: Record<ProviderId, TranslateProvider>
@@ -82,7 +83,12 @@ export async function translateWithFallback(
       }
       throw new ProviderError({
         ...secondaryInfo,
-        message: `主源(${deps.primary}): ${primaryInfo.message}; 备用源(${secondary}): ${secondaryInfo.message}`
+        message: MSG.formatFallbackFailure(
+          deps.primary,
+          primaryInfo.message,
+          secondary,
+          secondaryInfo.message
+        )
       })
     }
   }

@@ -1,16 +1,13 @@
 import { execFileSync } from 'node:child_process'
+import { app } from 'electron'
 import {
-  captureExternalTargetHwnd as win32CaptureExternalTargetHwnd,
-  classifyWindowCopyKind as win32ClassifyWindowCopyKind,
   classifyWindowKind as win32ClassifyWindowKind,
-  classifyWindowPasteKind as win32ClassifyWindowPasteKind,
   focusWindow as win32FocusWindow,
   getClipboardSequenceNumber as win32GetClipboardSequenceNumber,
   getCurrentDesktopName as win32GetCurrentDesktopName,
   getForegroundWindow as win32GetForegroundWindow,
   getWindowTitle as win32GetWindowTitle,
   injectMaskKey as win32InjectMaskKey,
-  isBlockedByUipi as win32IsBlockedByUipi,
   isOwnProcessWindow as win32IsOwnProcessWindow,
   isValidExternalTargetWindow as win32IsValidExternalTargetWindow,
   isWindow as win32IsWindow,
@@ -25,6 +22,11 @@ import {
 } from './win32Input'
 
 export type { WindowInputKind }
+
+export interface CustomTerminalExeSets {
+  extraWt?: ReadonlySet<string>
+  extraConhost?: ReadonlySet<string>
+}
 
 const MAC_TERMINAL_NAMES = new Set<string>([
   'terminal',
@@ -95,6 +97,12 @@ function runExecSync(cmd: string, args: string[], timeout = 400): string | null 
   }
 }
 
+export function hideDockOnMacOS(): void {
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.hide()
+  }
+}
+
 export function canInjectKeystrokes(): boolean {
   if (process.platform === 'win32' || process.platform === 'darwin') {
     return true
@@ -154,7 +162,7 @@ export function isValidExternalTarget(handle: number): boolean {
   if (process.platform === 'linux' && !isLinuxWayland()) {
     const pidOut = runExecSync('xdotool', ['getwindowpid', String(handle)])
     const pid = pidOut ? Number(pidOut) : 0
-    return pid !== process.pid && handle > 0
+    return pid > 0 && pid !== process.pid && handle > 0
   }
   return false
 }
@@ -186,13 +194,6 @@ export function isTargetMinimized(handle: number): boolean {
   return false
 }
 
-export function isTargetBlockedByPrivilege(handle: number): boolean {
-  if (process.platform === 'win32') {
-    return win32IsBlockedByUipi(handle)
-  }
-  return false
-}
-
 export function isWindowElevatedOverSelf(handle: number): boolean {
   if (process.platform === 'win32') {
     return win32IsWindowElevatedOverSelf(handle)
@@ -208,15 +209,12 @@ export function isOwnProcessWindow(handle: number): boolean {
   if (process.platform === 'darwin') {
     return handle === process.pid
   }
-  return false
-}
-
-export function captureExternalTargetHandle(): number {
-  if (process.platform === 'win32') {
-    return win32CaptureExternalTargetHwnd()
+  if (process.platform === 'linux' && !isLinuxWayland()) {
+    const pidOut = runExecSync('xdotool', ['getwindowpid', String(handle)])
+    const pid = pidOut ? Number(pidOut) : 0
+    return pid > 0 && pid === process.pid
   }
-  const fg = getActiveTargetHandle()
-  return isValidExternalTarget(fg) ? fg : 0
+  return false
 }
 
 export function getWindowTitle(handle: number): string {
@@ -240,44 +238,9 @@ export function injectMaskKey(): boolean {
   return false
 }
 
-function getCustomExeSets(): { extraWt: Set<string>; extraConhost: Set<string> } {
-  try {
-    const { configStore } = require('../services/configStore') as typeof import('../services/configStore')
-    const cfg = configStore.get()
-    const extraWt = new Set((cfg.customWtExeNames ?? []).map((s: string) => s.toLowerCase()))
-    const extraConhost = new Set((cfg.customConhostExeNames ?? []).map((s: string) => s.toLowerCase()))
-    return { extraWt, extraConhost }
-  } catch {
-    return { extraWt: new Set(), extraConhost: new Set() }
-  }
-}
-
-export function getTargetCopyKind(handle: number): WindowInputKind {
+function getTargetInputKind(handle: number, customSets?: CustomTerminalExeSets): WindowInputKind {
   if (process.platform === 'win32') {
-    const { extraWt, extraConhost } = getCustomExeSets()
-    return win32ClassifyWindowCopyKind(handle, extraWt, extraConhost)
-  }
-  return getTargetInputKind(handle)
-}
-
-export function getTargetPasteKind(handle: number): WindowInputKind {
-  if (process.platform === 'win32') {
-    const { extraWt, extraConhost } = getCustomExeSets()
-    return win32ClassifyWindowPasteKind(handle, extraWt, extraConhost)
-  }
-  return getTargetInputKind(handle)
-}
-
-export async function dispatchBackspaces(charCount: number): Promise<void> {
-  if (process.platform === 'win32') {
-    await win32SendBackspaces(charCount)
-  }
-}
-
-export function getTargetInputKind(handle: number): WindowInputKind {
-  if (process.platform === 'win32') {
-    const { extraWt, extraConhost } = getCustomExeSets()
-    return win32ClassifyWindowKind(handle, extraWt, extraConhost)
+    return win32ClassifyWindowKind(handle, customSets?.extraWt, customSets?.extraConhost)
   }
   if (process.platform === 'darwin') {
     return macKindCache.get(handle) ?? 'normal'
@@ -287,6 +250,20 @@ export function getTargetInputKind(handle: number): WindowInputKind {
     return classifyLinuxWmClass(wmClass)
   }
   return 'normal'
+}
+
+export function getTargetCopyKind(handle: number, customSets?: CustomTerminalExeSets): WindowInputKind {
+  return getTargetInputKind(handle, customSets)
+}
+
+export function getTargetPasteKind(handle: number, customSets?: CustomTerminalExeSets): WindowInputKind {
+  return getTargetInputKind(handle, customSets)
+}
+
+export async function dispatchBackspaces(charCount: number): Promise<void> {
+  if (process.platform === 'win32') {
+    await win32SendBackspaces(charCount)
+  }
 }
 
 export function focusTarget(handle: number): boolean {

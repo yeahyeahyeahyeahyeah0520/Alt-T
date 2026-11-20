@@ -1,19 +1,16 @@
 import fs from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app, safeStorage } from 'electron'
-import { mergeConfig } from '../../shared/config'
+import { isRecord, mergeConfig } from '../../shared/config'
 import type { AppConfig, HistoryItem } from '../../shared/types'
 import { logError, logWarn } from './logger'
 
 const CLEAN_EXIT_FLAG_NAME = 'clean-exit.flag'
-const LEGACY_APP_DIR_NAME = 'TTime Lite'
-const LEGACY_INTENTIONAL_QUIT_FLAG_NAME = 'intentional-quit.flag'
 const RENAME_BACKOFF_MS = [15, 35, 70] as const
 const RETRYABLE_FS_CODES = new Set(['EPERM', 'EBUSY', 'EACCES'])
 
 export interface ConfigStoreDeps {
   getUserDataDir: () => string
-  getAppDataDir: () => string
   fs: Pick<
     typeof fs,
     'existsSync' | 'mkdirSync' | 'readFileSync' | 'writeFileSync' | 'renameSync' | 'unlinkSync'
@@ -24,7 +21,6 @@ export interface ConfigStoreDeps {
     decryptString: (encrypted: Buffer) => string
   }
   sleepSync: (ms: number) => void
-  isSmoke: () => boolean
 }
 
 export interface ConfigStoreInstance {
@@ -32,16 +28,12 @@ export interface ConfigStoreInstance {
   load: () => AppConfig
   get: () => AppConfig
   set: (next: unknown) => AppConfig
-  addHistory: (item: HistoryItem) => void
-  clearHistory: () => void
+  addHistory: (item: HistoryItem) => AppConfig | null
+  clearHistory: () => AppConfig
   getCleanExitFlagPath: () => string
   markCleanExit: () => void
   clearCleanExit: () => void
   getCachedApiKey: () => string
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 function defaultSleepSync(ms: number): void {
@@ -67,11 +59,9 @@ function isRetryableFsError(err: unknown): boolean {
 function defaultDeps(): ConfigStoreDeps {
   return {
     getUserDataDir: () => app.getPath('userData'),
-    getAppDataDir: () => app.getPath('appData'),
     fs,
     safeStorage,
-    sleepSync: defaultSleepSync,
-    isSmoke: () => process.env['TTL_SMOKE'] === '1' || process.env['FP_SMOKE'] === '1'
+    sleepSync: defaultSleepSync
   }
 }
 
@@ -100,18 +90,6 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
     return join(deps.getUserDataDir(), CLEAN_EXIT_FLAG_NAME)
   }
 
-  function getLegacyIntentionalQuitFlagPath(): string | null {
-    try {
-      const appDataDir = deps.getAppDataDir()
-      if (!appDataDir) return null
-      const legacyDir = join(appDataDir, LEGACY_APP_DIR_NAME)
-      if (!deps.fs.existsSync(legacyDir)) return null
-      return join(legacyDir, LEGACY_INTENTIONAL_QUIT_FLAG_NAME)
-    } catch {
-      return null
-    }
-  }
-
   function markCleanExit(): void {
     try {
       const flagPath = getCleanExitFlagPath()
@@ -119,16 +97,6 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
       deps.fs.writeFileSync(flagPath, String(Date.now()), 'utf8')
     } catch {
       // Best effort on shutdown
-    }
-    if (!deps.isSmoke()) {
-      try {
-        const legacyFlagPath = getLegacyIntentionalQuitFlagPath()
-        if (legacyFlagPath) {
-          deps.fs.writeFileSync(legacyFlagPath, String(Date.now()), 'utf8')
-        }
-      } catch {
-        // Best effort legacy watchdog compatibility
-      }
     }
   }
 
@@ -140,16 +108,6 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
       }
     } catch {
       // Best effort on startup
-    }
-    if (!deps.isSmoke()) {
-      try {
-        const legacyFlagPath = getLegacyIntentionalQuitFlagPath()
-        if (legacyFlagPath && deps.fs.existsSync(legacyFlagPath)) {
-          deps.fs.unlinkSync(legacyFlagPath)
-        }
-      } catch {
-        // Best effort legacy watchdog compatibility
-      }
     }
   }
 
@@ -293,14 +251,14 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
     return get()
   }
 
-  function addHistory(item: HistoryItem): void {
+  function addHistory(item: HistoryItem): AppConfig | null {
     try {
       const current = get()
       if (!current.historyEnabled || current.historyLimit <= 0) {
-        return
+        return null
       }
       const nextHistory = [item, ...current.history]
-      set({
+      return set({
         ...current,
         history: nextHistory
       })
@@ -308,12 +266,13 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
       logWarn(
         `persist history skipped due to write error: ${err instanceof Error ? err.message : String(err)}`
       )
+      return null
     }
   }
 
-  function clearHistory(): void {
+  function clearHistory(): AppConfig {
     const current = get()
-    set({
+    return set({
       ...current,
       history: []
     })
@@ -350,50 +309,14 @@ export function setConfigStoreDepsForTest(overrides: Partial<ConfigStoreDeps> | 
   activeStore = overrides === null ? null : createConfigStore(overrides)
 }
 
-export function getCleanExitFlagPath(): string {
-  return getActiveStore().getCleanExitFlagPath()
-}
-
-export function markCleanExit(): void {
-  getActiveStore().markCleanExit()
-}
-
-export function clearCleanExit(): void {
-  getActiveStore().clearCleanExit()
-}
-
-export function hasSavedConfigFile(): boolean {
-  return getActiveStore().hasSavedConfigFile()
-}
-
-export function load(): AppConfig {
-  return getActiveStore().load()
-}
-
-export function get(): AppConfig {
-  return getActiveStore().get()
-}
-
-export function set(next: unknown): AppConfig {
-  return getActiveStore().set(next)
-}
-
-export function addHistory(item: HistoryItem): void {
-  getActiveStore().addHistory(item)
-}
-
-export function clearHistory(): void {
-  getActiveStore().clearHistory()
-}
-
-export const configStore = {
-  hasSavedConfigFile,
-  load,
-  get,
-  set,
-  addHistory,
-  clearHistory,
-  markCleanExit,
-  clearCleanExit,
-  getCachedApiKey: (): string => getActiveStore().getCachedApiKey()
+export const configStore: Omit<ConfigStoreInstance, 'getCleanExitFlagPath'> = {
+  hasSavedConfigFile: () => getActiveStore().hasSavedConfigFile(),
+  load: () => getActiveStore().load(),
+  get: () => getActiveStore().get(),
+  set: (next: unknown) => getActiveStore().set(next),
+  addHistory: (item: HistoryItem) => getActiveStore().addHistory(item),
+  clearHistory: () => getActiveStore().clearHistory(),
+  markCleanExit: () => getActiveStore().markCleanExit(),
+  clearCleanExit: () => getActiveStore().clearCleanExit(),
+  getCachedApiKey: () => getActiveStore().getCachedApiKey()
 }

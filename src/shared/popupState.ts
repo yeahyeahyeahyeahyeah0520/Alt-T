@@ -1,6 +1,13 @@
-import { DEFAULT_CONFIG, type AppConfig, type PopupShowPush, type TargetLang } from './types'
+import { MSG } from './messages'
+import {
+  DEFAULT_CONFIG,
+  MAX_TRANSLATE_CHARS,
+  type AppConfig,
+  type PopupShowPush,
+  type TargetLang
+} from './types'
 
-export const MAX_MANUAL_INPUT_CHARS = 5000
+export const MAX_MANUAL_INPUT_CHARS = MAX_TRANSLATE_CHARS
 
 export interface PopupUiState {
   sourceText: string
@@ -12,7 +19,6 @@ export interface PopupUiState {
   lastSubmittedLang: TargetLang
   pendingPasteAfterDone: boolean
   pasting: boolean
-  status: 'idle' | 'loading' | 'streaming' | 'done' | 'error'
 }
 
 export function createInitialPopupUiState(
@@ -27,8 +33,7 @@ export function createInitialPopupUiState(
     lastSubmittedText: '',
     lastSubmittedLang: defaultTargetLang,
     pendingPasteAfterDone: false,
-    pasting: false,
-    status: 'idle'
+    pasting: false
   }
 }
 
@@ -104,7 +109,7 @@ export function handlePopupBlurState(
 }
 
 export function shouldSuppressMidStreamResize(
-  status: PopupUiState['status'],
+  status: 'idle' | 'loading' | 'streaming' | 'done' | 'error',
   pendingPasteAfterDone: boolean
 ): boolean {
   return status === 'streaming' && pendingPasteAfterDone
@@ -125,7 +130,7 @@ export function validateManualInputLength(
   if (text.length > maxChars) {
     return {
       ok: false,
-      message: `\u8f93\u5165\u6587\u672c\u8d85\u8fc7 ${maxChars} \u5b57\u7b26\u4e0a\u9650`
+      message: MSG.inputTooLong(maxChars)
     }
   }
   return { ok: true }

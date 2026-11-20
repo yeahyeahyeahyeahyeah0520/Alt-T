@@ -11,11 +11,11 @@ import {
   type TargetLang
 } from './types'
 
-function isRecord(v: unknown): v is Record<string, unknown> {
+export function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
-function clamp(n: number, min: number, max: number): number {
+export function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n))
 }
 
@@ -82,16 +82,10 @@ function mergePrompts(raw: unknown): PromptTemplate[] {
   return out.length > 0 ? out : cloneDefaultPrompts()
 }
 
-export const PROTECTED_PROMPT_IDS: readonly string[] = [
-  'translate',
-  'cli-prompt',
-  'ocr-translate'
-]
-
-export const TEXT_EXCLUDED_PROMPT_IDS: readonly string[] = ['ocr-translate']
+const PROTECTED_PROMPT_IDS: ReadonlySet<string> = new Set(['translate', 'cli-prompt'])
 
 export function isProtectedPromptId(id: string): boolean {
-  return PROTECTED_PROMPT_IDS.includes(id.trim())
+  return PROTECTED_PROMPT_IDS.has(id.trim())
 }
 
 export function restoreDefaultPrompts(currentPrompts?: PromptTemplate[]): PromptTemplate[] {
@@ -116,12 +110,10 @@ function mergeOpenAI(raw: unknown): OpenAIProviderConfig {
   }
   const prompts = mergePrompts(raw.prompts)
   const rawActiveId = typeof raw.activePromptId === 'string' ? raw.activePromptId.trim() : ''
-  const selectable = prompts.filter((p) => !TEXT_EXCLUDED_PROMPT_IDS.includes(p.id))
-  const fallbackPrompt = selectable[0] ?? prompts[0]
   const activePromptId =
-    rawActiveId !== '' && selectable.some((p) => p.id === rawActiveId)
+    rawActiveId !== '' && prompts.some((p) => p.id === rawActiveId)
       ? rawActiveId
-      : fallbackPrompt.id
+      : prompts[0].id
 
   return {
     baseUrl: typeof raw.baseUrl === 'string' ? raw.baseUrl.trim() : def.baseUrl,
@@ -148,9 +140,34 @@ function mergeProxy(raw: unknown): ProxyConfig {
 
 function mergeExeNameList(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
-  return raw
-    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    .map((item) => item.trim().toLowerCase())
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of raw) {
+    if (typeof item !== 'string') continue
+    const norm = item.trim().toLowerCase()
+    if (norm.length === 0 || seen.has(norm)) continue
+    seen.add(norm)
+    out.push(norm)
+  }
+  return out
+}
+
+export function createHistoryEntry(params: {
+  id: string
+  at: number
+  from: string
+  to: string
+  provider: ProviderId
+  target: TargetLang
+}): HistoryItem {
+  return {
+    id: params.id,
+    at: params.at,
+    from: params.from.slice(0, 2000),
+    to: params.to.slice(0, 4000),
+    provider: params.provider,
+    target: params.target
+  }
 }
 
 function mergeHistory(raw: unknown, limit: number): HistoryItem[] {
@@ -183,7 +200,7 @@ function mergeHistory(raw: unknown, limit: number): HistoryItem[] {
   return out
 }
 
-const HOTKEY_KEYS: ReadonlyArray<keyof HotkeyConfig> = [
+export const HOTKEY_KEYS: ReadonlyArray<keyof HotkeyConfig> = [
   'directInputTranslate',
   'replaceTranslate',
   'selectionTranslate',

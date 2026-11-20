@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
+  clamp,
   findDuplicateHotkeys,
+  HOTKEY_KEYS,
   isProtectedPromptId,
   isValidGlobalAccelerator,
   mergeConfig,
-  restoreDefaultPrompts,
-  TEXT_EXCLUDED_PROMPT_IDS
+  restoreDefaultPrompts
 } from '../../../shared/config'
 import { truncatePreview } from '../../../shared/text'
 import {
@@ -20,18 +21,6 @@ import {
 
 type HotkeyStatusKind = 'idle' | 'valid' | 'invalid' | 'occupied' | 'duplicate'
 
-interface HotkeyFieldMeta {
-  key: keyof HotkeyConfig
-  label: string
-}
-
-const HOTKEY_FIELDS: HotkeyFieldMeta[] = [
-  { key: 'directInputTranslate', label: '极速译入终端/窗口' },
-  { key: 'replaceTranslate', label: '取词并原地替换' },
-  { key: 'selectionTranslate', label: '取词并浮窗翻译' },
-  { key: 'togglePopup', label: '显示/隐藏主浮窗' }
-]
-
 const HOTKEY_LABEL_MAP: Record<keyof HotkeyConfig, string> = {
   directInputTranslate: '极速译入终端/窗口',
   replaceTranslate: '取词并原地替换',
@@ -39,10 +28,17 @@ const HOTKEY_LABEL_MAP: Record<keyof HotkeyConfig, string> = {
   togglePopup: '显示/隐藏主浮窗'
 }
 
+const HOTKEY_FIELDS = HOTKEY_KEYS.map((key) => ({
+  key,
+  label: HOTKEY_LABEL_MAP[key]
+}))
+
 const form = ref<AppConfig>(mergeConfig(DEFAULT_CONFIG))
 const historyItems = ref<HistoryItem[]>([])
 const latestPopupWidth = ref(DEFAULT_CONFIG.popupWidth)
 const latestPopupHeight = ref(DEFAULT_CONFIG.popupHeight)
+const customWtInput = ref('')
+const customConhostInput = ref('')
 
 const hotkeyStatus = ref<Record<keyof HotkeyConfig, HotkeyStatusKind>>({
   directInputTranslate: 'idle',
@@ -56,9 +52,7 @@ const saveError = ref('')
 const saving = ref(false)
 const historyExpanded = ref(false)
 
-const selectablePrompts = computed<PromptTemplate[]>(() =>
-  form.value.openai.prompts.filter((p) => !TEXT_EXCLUDED_PROMPT_IDS.includes(p.id))
-)
+const selectablePrompts = computed<PromptTemplate[]>(() => form.value.openai.prompts)
 
 const activePrompt = computed<PromptTemplate | undefined>(() =>
   selectablePrompts.value.find((p) => p.id === form.value.openai.activePromptId)
@@ -70,6 +64,21 @@ const canDeletePrompt = computed(() => {
 })
 
 const recentHistory = computed(() => historyItems.value.slice(0, 50))
+const directHotkey = computed(() => form.value.hotkeys.directInputTranslate.trim() || 'Alt+T')
+const replaceHotkey = computed(() => form.value.hotkeys.replaceTranslate.trim() || 'Alt+R')
+
+function parseExeNameList(raw: string): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const part of raw.split(/[\r\n,;]+/)) {
+    const trimmed = part.trim().toLowerCase()
+    if (trimmed !== '' && !seen.has(trimmed)) {
+      seen.add(trimmed)
+      out.push(trimmed)
+    }
+  }
+  return out
+}
 
 async function checkHotkey(key: keyof HotkeyConfig): Promise<void> {
   const accel = form.value.hotkeys[key].trim()
@@ -117,16 +126,14 @@ function deletePrompt(): void {
   const remaining = form.value.openai.prompts.filter((p) => p.id !== targetId)
   if (remaining.length === 0) return
   form.value.openai.prompts = remaining
-  const firstSelectable = remaining.find((p) => !TEXT_EXCLUDED_PROMPT_IDS.includes(p.id))
-  form.value.openai.activePromptId = (firstSelectable ?? remaining[0]).id
+  form.value.openai.activePromptId = remaining[0].id
 }
 
 function handleRestoreDefaultPrompts(): void {
   const restored = restoreDefaultPrompts(form.value.openai.prompts)
   form.value.openai.prompts = restored
-  const selectable = restored.filter((p) => !TEXT_EXCLUDED_PROMPT_IDS.includes(p.id))
-  if (!selectable.some((p) => p.id === form.value.openai.activePromptId)) {
-    form.value.openai.activePromptId = selectable[0]?.id ?? restored[0]?.id ?? 'translate'
+  if (!restored.some((p) => p.id === form.value.openai.activePromptId)) {
+    form.value.openai.activePromptId = restored[0]?.id ?? 'translate'
   }
 }
 
@@ -139,10 +146,9 @@ async function handleClearHistory(): Promise<void> {
   }
 }
 
-function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+function parseFiniteClamp(value: unknown, min: number, max: number, fallback: number): number {
   const n = Number(value)
-  if (!Number.isFinite(n)) return fallback
-  return Math.min(max, Math.max(min, n))
+  return Number.isFinite(n) ? clamp(n, min, max) : fallback
 }
 
 async function handleSave(): Promise<void> {
@@ -151,14 +157,14 @@ async function handleSave(): Promise<void> {
   saveError.value = ''
 
   try {
-    const temperature = clampNumber(
+    const temperature = parseFiniteClamp(
       form.value.openai.temperature,
       0,
       2,
       DEFAULT_CONFIG.openai.temperature
     )
     const historyLimit = Math.round(
-      clampNumber(form.value.historyLimit, 0, 1000, DEFAULT_CONFIG.historyLimit)
+      parseFiniteClamp(form.value.historyLimit, 0, 1000, DEFAULT_CONFIG.historyLimit)
     )
 
     const invalidHotkeys = HOTKEY_FIELDS.filter(
@@ -191,6 +197,8 @@ async function handleSave(): Promise<void> {
       historyLimit,
       popupWidth: latestPopupWidth.value,
       popupHeight: latestPopupHeight.value,
+      customWtExeNames: parseExeNameList(customWtInput.value),
+      customConhostExeNames: parseExeNameList(customConhostInput.value),
       history: historyItems.value
     })
 
@@ -227,6 +235,7 @@ let unsubConfigChanged: (() => void) | null = null
 onMounted(async () => {
   unsubConfigChanged = window.api.onConfigChanged((nextCfg: AppConfig) => {
     const normalized = mergeConfig(nextCfg)
+    form.value.autoLaunch = normalized.autoLaunch
     historyItems.value = normalized.history
     latestPopupWidth.value = normalized.popupWidth
     latestPopupHeight.value = normalized.popupHeight
@@ -238,6 +247,8 @@ onMounted(async () => {
     historyItems.value = loaded.history
     latestPopupWidth.value = loaded.popupWidth
     latestPopupHeight.value = loaded.popupHeight
+    customWtInput.value = (loaded.customWtExeNames ?? []).join(', ')
+    customConhostInput.value = (loaded.customConhostExeNames ?? []).join(', ')
   } catch (err) {
     saveError.value = err instanceof Error ? err.message : String(err)
   }
@@ -302,7 +313,7 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="hint">
-          提示：在 VS Code / Antigravity 等 IDE 内置终端中，推荐使用 Alt+T 极速译入英文并回车上屏。
+          提示：在 VS Code / Antigravity 等 IDE 内置终端中，推荐使用 {{ directHotkey }} 极速译入英文并回车上屏。
         </div>
       </section>
 
@@ -468,8 +479,32 @@ onUnmounted(() => {
               终端划选自动退格替换
             </label>
             <span class="hint">
-              默认关闭（安全浮窗模式）：在终端划选按 Alt+R 时先弹出译文预览，按 Enter 安全填入，避免盲发退格误删命令行；开启后（Option B）将按字形簇自动退格替换。VS Code 等 IDE 内置终端推荐直接按 Alt+T。
+              默认关闭（安全浮窗模式）：在终端划选按 {{ replaceHotkey }} 时先弹出译文预览，按 Enter 安全填入，避免盲发退格误删命令行；开启后将按字形簇自动退格替换（仅 Windows 支持退格注入）。IDE 内置终端推荐直接按 {{ directHotkey }}。
             </span>
+          </div>
+        </div>
+        <div class="row">
+          <label class="label" for="custom-wt-exes">Ctrl+Shift+V 终端</label>
+          <div class="stack-cell">
+            <input
+              id="custom-wt-exes"
+              v-model="customWtInput"
+              type="text"
+              placeholder="例如 custom-wt.exe, myterm.exe（逗号分隔）"
+            />
+            <span class="hint">自定义追加使用 Ctrl+Shift+V 复制/粘贴的终端 exe 文件名</span>
+          </div>
+        </div>
+        <div class="row">
+          <label class="label" for="custom-conhost-exes">Shift+Insert 终端</label>
+          <div class="stack-cell">
+            <input
+              id="custom-conhost-exes"
+              v-model="customConhostInput"
+              type="text"
+              placeholder="例如 my-terminal.exe（逗号分隔）"
+            />
+            <span class="hint">自定义追加使用 Ctrl+Insert / Shift+Insert 的终端 exe 文件名</span>
           </div>
         </div>
         <div class="row">

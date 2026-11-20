@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  createHistoryEntry,
   findDuplicateHotkeys,
   isProviderId,
   isTargetLang,
@@ -90,13 +91,26 @@ describe('mergeConfig', () => {
     assert.equal(custom.hotkeys.directInputTranslate, 'Alt+Shift+T')
   })
 
-  it('merges custom terminal exe names and normalizes to lower case', () => {
+  it('merges custom terminal exe names, deduplicates, and normalizes to lower case', () => {
     const cfg = mergeConfig({
-      customWtExeNames: ['MyTerm.exe', '  CUSTOM-TERM.EXE  '],
-      customConhostExeNames: ['LEGACY.EXE', 123]
+      customWtExeNames: ['MyTerm.exe', '  CUSTOM-TERM.EXE  ', 'myterm.exe', '   '],
+      customConhostExeNames: ['LEGACY.EXE', 123, 'legacy.exe']
     })
     assert.deepEqual(cfg.customWtExeNames, ['myterm.exe', 'custom-term.exe'])
     assert.deepEqual(cfg.customConhostExeNames, ['legacy.exe'])
+  })
+
+  it('caps createHistoryEntry text fields to configured storage limits', () => {
+    const item = createHistoryEntry({
+      id: 'h1',
+      at: 1000,
+      from: 'a'.repeat(2500),
+      to: 'b'.repeat(4500),
+      provider: 'edge',
+      target: 'zh-Hans'
+    })
+    assert.equal(item.from.length, 2000)
+    assert.equal(item.to.length, 4000)
   })
 })
 
@@ -105,7 +119,7 @@ describe('hotkey duplicate detection', () => {
     assert.equal(normalizeAcceleratorKey('  alt + shift + t '), 'alt+shift+t')
   })
 
-  it('returns empty array when all 5 default hotkeys are distinct', () => {
+  it('returns empty array when all 4 default hotkeys are distinct', () => {
     assert.deepEqual(findDuplicateHotkeys(DEFAULT_CONFIG.hotkeys), [])
   })
 

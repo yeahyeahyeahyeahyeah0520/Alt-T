@@ -15,7 +15,7 @@ if (!fs.existsSync(mainEntry)) {
 }
 
 const TIMEOUT_MS = 25000
-const childEnv = { ...process.env, TTL_SMOKE: '1', FP_SMOKE: '1' }
+const childEnv = { ...process.env, FP_SMOKE: '1' }
 delete childEnv.ELECTRON_RUN_AS_NODE
 
 const child = spawn(electronExecutable, ['.'], {
@@ -86,7 +86,7 @@ child.on('close', (code) => {
     process.exit(1)
   }
 
-  if (code === 0 && output.includes('[fp] SMOKE_OK')) {
+  if (code === 0 && output.includes('[alt-t] SMOKE_OK')) {
     console.log(output.trim())
     console.log('[smoke] PASS')
     process.exit(0)

@@ -4,16 +4,11 @@ import {
   clampPopupHeight,
   clampToWorkArea,
   placePopup,
-  type Point,
   type Rect,
   type Size
 } from '../core/geometry'
 
-export function getCursorPoint(): Point {
-  return screen.getCursorScreenPoint()
-}
-
-export function getCursorDisplay(): Display {
+function getCursorDisplay(): Display {
   const cursor = screen.getCursorScreenPoint()
   return screen.getDisplayNearestPoint(cursor)
 }

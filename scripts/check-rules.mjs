@@ -41,7 +41,9 @@ const rendererNoHttpRe = /\bfetch\s*\(|XMLHttpRequest|axios/
 const noAnyRe = /:\s*any\b|<any>|\bas\s+any\b/
 const noTsIgnoreRe = /@ts-ignore|@ts-expect-error/
 const noTodoRe = /TODO|FIXME|XXX/
-const platformGuardRe = /process\.platform/
+const platformGuardRe = /process\.platform|os\.platform\s*\(/
+const platformNoServiceStateRe =
+  /from\s+['"][^'"]*\/services\/(configStore|selectionService|hotkeyService|translateService)['"]|require\(['"][^'"]*\/services\/(configStore|selectionService|hotkeyService|translateService)['"]\)/
 
 const winUsersPathRe = new RegExp(
   '[A-Za-z]:\\\\+Users\\\\+(?!\\\\*(?:Public(?:\\\\|$)|Default(?:\\\\|$)|<user>|your-user))',
@@ -140,6 +142,9 @@ export function checkProjectRules(rootDir = process.cwd()) {
       }
       if (!inPlatformLayer && platformGuardRe.test(line)) {
         report(rel, lineNum, 'platform-guard')
+      }
+      if (inPlatformLayer && platformNoServiceStateRe.test(line)) {
+        report(rel, lineNum, 'platform-no-service-state')
       }
     }
   }

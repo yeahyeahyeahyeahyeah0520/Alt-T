@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { mergeConfig } from '../../../shared/config'
+import { MSG } from '../../../shared/messages'
 import {
   applyLoadedConfigState,
   applyPopupShowState,
@@ -51,6 +52,7 @@ const {
 } = useTranslate()
 
 const canTranslate = computed(() => uiState.value.sourceText.trim() !== '')
+const directHotkey = computed(() => config.value.hotkeys.directInputTranslate || 'Alt+T')
 
 const providerLabel = computed(() => {
   if (!resultProvider.value) return ''
@@ -71,13 +73,13 @@ function showLocalToast(level: NotifyPush['level'], message: string): void {
 
 function safePopupHide(): void {
   void window.api.popupHide().catch((err: unknown) => {
-    console.error('[fp] popupHide failed:', err)
+    console.error('[alt-t] popupHide failed:', err)
   })
 }
 
 function safePopupResize(height: number): void {
   void window.api.popupResize(height).catch((err: unknown) => {
-    console.error('[fp] popupResize failed:', err)
+    console.error('[alt-t] popupResize failed:', err)
   })
 }
 
@@ -97,7 +99,7 @@ function handleSourceInput(e: Event): void {
     const clamped = clampManualInput(target.value)
     uiState.value.sourceText = clamped
     target.value = clamped
-    showLocalToast('warn', `输入已截断至 ${MAX_MANUAL_INPUT_CHARS} 字符上限`)
+    showLocalToast('warn', MSG.inputTruncated(MAX_MANUAL_INPUT_CHARS))
   }
 }
 
@@ -265,13 +267,13 @@ function handleWindowKeydown(e: KeyboardEvent): void {
 
 function handleWindowBlur(): void {
   const { nextState, shouldHide, clearedPendingPaste } = handlePopupBlurState(
-    { ...uiState.value, status: status.value },
+    uiState.value,
     pinned.value,
     isBusy.value
   )
   uiState.value = nextState
   if (clearedPendingPaste) {
-    showLocalToast('warn', '窗口已失焦，已取消自动填入；翻译完成后可手动点击“填入窗口”')
+    showLocalToast('warn', MSG.POPUP_BLUR_PASTE_CANCELLED)
   }
   if (shouldHide) {
     safePopupHide()
@@ -361,7 +363,7 @@ onMounted(async () => {
     config.value = loaded
     uiState.value = applyLoadedConfigState(uiState.value, loaded)
   } catch (err) {
-    console.error('[fp] failed to load popup config:', err)
+    console.error('[alt-t] failed to load popup config:', err)
   }
 })
 
@@ -391,8 +393,8 @@ onUnmounted(() => {
           :class="{ active: uiState.directPasteMode }"
           :title="
             uiState.directPasteMode
-              ? '已开启回车直填：按 Enter 直接翻译并填入终端或原窗口（IDE 内置终端推荐直接按 Alt+T）'
-              : '开启回车直填模式（Alt+T 默认开启，IDE 内置终端推荐使用 Alt+T）'
+              ? `已开启回车直填：按 Enter 直接翻译并填入终端或原窗口（IDE 内置终端推荐直接按 ${directHotkey}）`
+              : `开启回车直填模式（${directHotkey} 默认开启，IDE 内置终端推荐使用 ${directHotkey}）`
           "
           @click="handleToggleDirectPaste"
         >
@@ -430,7 +432,7 @@ onUnmounted(() => {
         :placeholder="
           uiState.directPasteMode
             ? '极速模式：输入中文直接按 Enter 回车，自动译成英文填入终端（Shift+Enter 换行）'
-            : '输入文本：Enter 翻译，Ctrl+Enter 翻译并填入终端或原窗口，Shift+Enter 换行（IDE 内置终端推荐 Alt+T）'
+            : `输入文本：Enter 翻译，Ctrl+Enter 翻译并填入终端或原窗口，Shift+Enter 换行（IDE 内置终端推荐 ${directHotkey}）`
         "
         @input="handleSourceInput"
         @keydown="handleTextareaKeydown"
@@ -505,7 +507,7 @@ onUnmounted(() => {
           </button>
         </div>
         <div v-if="status === 'idle' && !translatedText && !error" class="result-placeholder">
-          译文将显示在此处（Ctrl+Enter 可直接译入原窗口；IDE 内置终端推荐按 Alt+T）
+          译文将显示在此处（Ctrl+Enter 可直接译入原窗口；IDE 内置终端推荐按 {{ directHotkey }}）
         </div>
 
         <footer class="result-footer">

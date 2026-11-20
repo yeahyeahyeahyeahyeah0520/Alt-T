@@ -1,6 +1,7 @@
 import { globalShortcut, powerMonitor } from 'electron'
 import {
   findDuplicateHotkeys,
+  HOTKEY_KEYS,
   isValidGlobalAccelerator,
   normalizeAcceleratorKey
 } from '../../shared/config'
@@ -56,13 +57,6 @@ export interface HotkeyServiceInstance {
 const MAX_RETRY_ATTEMPTS = 5
 const RETRY_BASE_MS = 500
 const SESSION_DEBOUNCE_MS = 300
-
-const HOTKEY_SLOTS: ReadonlyArray<keyof HotkeyConfig> = [
-  'directInputTranslate',
-  'replaceTranslate',
-  'selectionTranslate',
-  'togglePopup'
-]
 
 function defaultDeps(): HotkeyServiceDeps {
   return {
@@ -352,7 +346,7 @@ export function createHotkeyService(
 
     if (lastConfig !== null) {
       const targetNorm = normalizeAcceleratorKey(trimmed)
-      for (const slot of HOTKEY_SLOTS) {
+      for (const slot of HOTKEY_KEYS) {
         const configured = lastConfig[slot].trim()
         if (configured !== '' && normalizeAcceleratorKey(configured) === targetNorm) {
           if (deps.globalShortcut.isRegistered(configured) || deps.globalShortcut.isRegistered(trimmed)) {
@@ -432,35 +426,12 @@ export function setHotkeyDepsForTest(overrides: Partial<HotkeyServiceDeps> | nul
   activeService = overrides === null ? null : createHotkeyService(overrides)
 }
 
-export function configureHotkeys(nextHandlers: HotkeyHandlers): void {
-  getActiveService().configureHotkeys(nextHandlers)
-}
-
-export function registerAll(cfg: HotkeyConfig): HotkeyConflict[] {
-  return getActiveService().registerAll(cfg)
-}
-
-export function verifyHotkeys(): { ok: boolean; missing: string[] } {
-  return getActiveService().verifyHotkeys()
-}
-
-export function healMissingHotkeys(): string[] {
-  return getActiveService().healMissingHotkeys()
-}
-
-export function checkHotkey(accelerator: string): HotkeyCheckReply {
-  return getActiveService().checkHotkey(accelerator)
-}
-
-export function dispose(): void {
-  getActiveService().dispose()
-}
-
-export const hotkeyService = {
-  configureHotkeys,
-  registerAll,
-  checkHotkey,
-  verifyHotkeys,
-  healMissingHotkeys,
-  dispose
+export const hotkeyService: HotkeyServiceInstance = {
+  configureHotkeys: (nextHandlers: HotkeyHandlers) =>
+    getActiveService().configureHotkeys(nextHandlers),
+  registerAll: (cfg: HotkeyConfig) => getActiveService().registerAll(cfg),
+  checkHotkey: (accelerator: string) => getActiveService().checkHotkey(accelerator),
+  verifyHotkeys: () => getActiveService().verifyHotkeys(),
+  healMissingHotkeys: () => getActiveService().healMissingHotkeys(),
+  dispose: () => getActiveService().dispose()
 }

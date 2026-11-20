@@ -2,7 +2,7 @@ import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import net from 'node:net'
-import { createHttp } from '../src/main/providers/httpClient'
+import { createHttp, mapFetchError } from '../src/main/providers/httpClient'
 import { OpenAICompatibleProvider } from '../src/main/providers/openaiCompatible'
 import { EdgeDirectProvider } from '../src/main/providers/edgeDirect'
 import { translateWithFallback } from '../src/main/providers/fallback'
@@ -587,7 +587,7 @@ describe('ProxyAgent routing & TranslateService', () => {
     assert.equal(sawConnect || sawAbsoluteUri, true)
   })
 
-  it('rejects invalid proxy URL with CONFIG error', async () => {
+  it('rejects invalid proxy URL with CONFIG error tagged with the calling provider', async () => {
     const httpClient = createHttp({
       getProxy: () => ({ enabled: true, url: 'not-a-valid-proxy-url' })
     })
@@ -598,8 +598,25 @@ describe('ProxyAgent routing & TranslateService', () => {
     })
     await assert.rejects(
       () => edge.translate({ text: 'hello', to: 'zh-Hans' }),
-      (err: unknown) => err instanceof ProviderError && err.info.code === 'CONFIG'
+      (err: unknown) =>
+        err instanceof ProviderError &&
+        err.info.code === 'CONFIG' &&
+        err.info.provider === 'edge'
     )
+  })
+
+  it('redacts secrets in mapFetchError even when error already matches provider id', () => {
+    const secret = 'fp-secret-map-fetch-42'
+    const original = new ProviderError({
+      code: 'HTTP',
+      provider: 'openai',
+      status: 500,
+      message: `upstream failed using ${secret} via http://user:${secret}@proxy.local:8080`,
+      retryable: true
+    })
+    const scrubbed = mapFetchError(original, 'openai', undefined, secret)
+    assert.equal(scrubbed.info.message.includes(secret), false)
+    assert.match(scrubbed.info.message, /http:\/\/\[REDACTED\]@proxy\.local:8080/)
   })
 
   it('translateService supports translateStream and cancels active request silently', async () => {

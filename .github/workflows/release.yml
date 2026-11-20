@@ -31,7 +31,7 @@ jobs:
       - name: Run full verification gate
         shell: pwsh
         env:
-          TTL_SMOKE: '1'
+          FP_SMOKE: '1'
         run: npm run verify
 
       - name: Build Windows NSIS & Portable installers

@@ -1,3 +1,4 @@
+import { isRecord } from '../../shared/config'
 import {
   DEFAULT_PROMPTS,
   ProviderError,
@@ -13,10 +14,6 @@ export interface ChatMessage {
   content: string
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
-
 export function renderPrompt(tpl: string, vars: { to: TargetLang; text: string }): string {
   let out = tpl.split('{{to}}').join(vars.to)
   out = out.split('{{toName}}').join(TARGET_LANG_NAME[vars.to])
@@ -29,7 +26,7 @@ function selectPrompt(cfg: OpenAIProviderConfig): PromptTemplate {
   return list.find((p) => p.id === cfg.activePromptId) ?? list[0]
 }
 
-export function buildMessages(prompt: PromptTemplate, req: ProviderRequest): ChatMessage[] {
+function buildMessages(prompt: PromptTemplate, req: ProviderRequest): ChatMessage[] {
   const sys = renderPrompt(prompt.systemPrompt, { to: req.to, text: req.text })
   const renderedUsr = renderPrompt(prompt.userPrompt, { to: req.to, text: req.text })
   const usr = renderedUsr.trim() === '' ? req.text : renderedUsr

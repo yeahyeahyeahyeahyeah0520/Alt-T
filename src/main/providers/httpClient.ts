@@ -1,7 +1,6 @@
 import { fetch, ProxyAgent, type Dispatcher, type Response } from 'undici'
-import type { ProxyConfig } from '../../shared/types'
-import { redactSecret, redactSecretsInText, redactUrlCredentials } from '../core/redact'
-import { ProviderError, type ProviderId } from './types'
+import { ProviderError, type ProviderId, type ProxyConfig } from '../../shared/types'
+import { redactSecretsInText } from '../core/redact'
 
 export class TimeoutMarker extends Error {
   constructor(message = 'Request timed out') {
@@ -26,14 +25,13 @@ export interface HttpRequestInit {
   headers?: Record<string, string>
   body?: string
   signal: AbortSignal
+  provider?: ProviderId
 }
 
 export interface HttpClient {
   request(url: string, init: HttpRequestInit): Promise<Response>
   dispose(): void
 }
-
-export { redactSecret, redactSecretsInText, redactUrlCredentials }
 
 export function createLinkedAbort(externalSignal?: AbortSignal): {
   controller: AbortController
@@ -75,11 +73,14 @@ export function mapFetchError(
   secret?: string
 ): ProviderError {
   if (err instanceof ProviderError) {
-    if (err.info.provider === provider) return err
+    const scrubbed = redactSecretsInText(err.info.message, secret)
+    if (err.info.provider === provider && scrubbed === err.info.message) {
+      return err
+    }
     return new ProviderError({
       ...err.info,
       provider,
-      message: redactSecret(err.info.message, secret)
+      message: scrubbed
     })
   }
 
@@ -105,14 +106,14 @@ export function mapFetchError(
   return new ProviderError({
     code: 'NETWORK',
     provider,
-    message: redactSecret(rawMsg, secret),
+    message: redactSecretsInText(rawMsg, secret),
     retryable: true
   })
 }
 
 export function sanitizeHttpErrorSnippet(bodyText: string, secret?: string): string {
   const singleLine = bodyText.replace(/[\r\n]+/g, ' ').trim().slice(0, 200)
-  return redactSecret(singleLine, secret)
+  return redactSecretsInText(singleLine, secret)
 }
 
 export function createHttp(deps: HttpDeps): HttpClient {
@@ -128,7 +129,7 @@ export function createHttp(deps: HttpDeps): HttpClient {
     }
   }
 
-  function resolveDispatcher(): Dispatcher | undefined {
+  function resolveDispatcher(provider: ProviderId = 'openai'): Dispatcher | undefined {
     const proxy = deps.getProxy()
     const rawUrl = proxy.url.trim()
     if (!proxy.enabled || rawUrl === '') {
@@ -142,7 +143,7 @@ export function createHttp(deps: HttpDeps): HttpClient {
     } catch {
       throw new ProviderError({
         code: 'CONFIG',
-        provider: 'openai',
+        provider,
         message: 'Invalid proxy URL',
         retryable: true
       })
@@ -151,7 +152,7 @@ export function createHttp(deps: HttpDeps): HttpClient {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new ProviderError({
         code: 'CONFIG',
-        provider: 'openai',
+        provider,
         message: `Unsupported proxy protocol: ${parsed.protocol}`,
         retryable: true
       })
@@ -168,7 +169,7 @@ export function createHttp(deps: HttpDeps): HttpClient {
   }
 
   async function request(url: string, init: HttpRequestInit): Promise<Response> {
-    const dispatcher = resolveDispatcher()
+    const dispatcher = resolveDispatcher(init.provider)
     return fetch(url, {
       method: init.method,
       headers: init.headers,

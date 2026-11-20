@@ -52,11 +52,6 @@ body {
   background: var(--bg);
 }
 
-body.screenshot-body {
-  background: transparent;
-  overflow: hidden;
-}
-
 button,
 input,
 select,

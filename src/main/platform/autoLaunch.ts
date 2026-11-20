@@ -2,9 +2,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { app, shell, type ShortcutDetails } from 'electron'
+import { logWarn } from '../services/logger'
 
 const WIN_STARTUP_SHORTCUT = 'Alt-T.lnk'
-const LEGACY_WATCHDOG_SHORTCUT = 'TTime Lite Watchdog.lnk'
 const LINUX_AUTOSTART_DESKTOP = 'alt-t.desktop'
 
 export interface AutoLaunchDeps {
@@ -144,8 +144,6 @@ export function syncAutoLaunch(
     return true
   }
 
-  const isSmoke = deps.env['TTL_SMOKE'] === '1' || deps.env['FP_SMOKE'] === '1'
-
   try {
     if (deps.platform === 'darwin') {
       deps.app.setLoginItemSettings({ openAtLogin: enabled })
@@ -162,10 +160,6 @@ export function syncAutoLaunch(
 
     const startupDir = getWindowsStartupDir(deps)
     const lnkPath = join(startupDir, WIN_STARTUP_SHORTCUT)
-    if (!isSmoke) {
-      removeFileIfExists(join(startupDir, LEGACY_WATCHDOG_SHORTCUT), deps.fs)
-    }
-
     const portableExe = (deps.env['PORTABLE_EXECUTABLE_FILE'] ?? '').trim()
 
     if (!enabled) {
@@ -229,7 +223,7 @@ export function syncAutoLaunch(
     }
     return deps.shell.writeShortcutLink(lnkPath, desired)
   } catch (err) {
-    console.warn('[fp] syncAutoLaunch failed:', err)
+    logWarn(`syncAutoLaunch failed: ${err instanceof Error ? err.message : String(err)}`)
     return false
   }
 }

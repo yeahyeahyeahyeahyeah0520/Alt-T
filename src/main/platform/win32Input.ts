@@ -1,4 +1,27 @@
-import type * as KoffiNS from 'koffi'
+import { MAX_TRANSLATE_CHARS } from '../../shared/types'
+import { logInfo, logWarn } from '../services/logger'
+import {
+  classifyTerminalWindow,
+  isNonTargetWindowClass,
+  type WindowInputKind
+} from './win32Classifier'
+import {
+  ensureWin32,
+  getCachedSelfRid,
+  hasTestWin32ApiOverride,
+  setCachedSelfRid,
+  setWin32ApiForTest,
+  type InputEvent,
+  type Win32Api
+} from './win32Ffi'
+
+export {
+  classifyExeName,
+  classifyTerminalWindow,
+  isNonTargetWindowClass,
+  type WindowInputKind
+} from './win32Classifier'
+export { setWin32ApiForTest, type Win32Api } from './win32Ffi'
 
 const INPUT_KEYBOARD = 1
 const KEYEVENTF_EXTENDEDKEY = 0x0001
@@ -24,82 +47,13 @@ const VK_MASK = 0xe8
 
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 const TOKEN_QUERY = 0x0008
-const TOKEN_INTEGRITY_LEVEL_CLASS = 25
-const SECURITY_MANDATORY_HIGH_RID = 0x3000
 const CF_UNICODETEXT = 13
 const GHND = 0x0042
 const MAPVK_VK_TO_VSC = 0
 const UOI_NAME = 2
 
-export const BACKSPACE_BATCH_CHARS = 20
-export const BACKSPACE_BATCH_INTERVAL_MS = 8
-const MAX_BACKSPACE_CHARS = 5000
-
-export type WindowInputKind = 'normal' | 'wt' | 'conhost'
-
-const WT_CLASS_NAMES = new Set<string>([
-  'cascadia_hosting_window_class',
-  'org.wezfurlong.wezterm'
-])
-
-const CONHOST_CLASS_NAMES = new Set<string>([
-  'consolewindowclass',
-  'virtualconsoleclass',
-  'mintty',
-  'putty',
-  'putty-nd'
-])
-
-const WT_EXE_NAMES = new Set<string>([
-  'windowsterminal.exe',
-  'wt.exe',
-  'wezterm-gui.exe',
-  'alacritty.exe',
-  'ghostty.exe',
-  'kitty.exe',
-  'tabby.exe',
-  'hyper.exe',
-  'rio.exe',
-  'warp.exe',
-  'wave.exe',
-  'waveterm.exe',
-  'terminus.exe'
-])
-
-const CONHOST_EXE_NAMES = new Set<string>([
-  'conhost.exe',
-  'openconsole.exe',
-  'cmd.exe',
-  'powershell.exe',
-  'pwsh.exe',
-  'mintty.exe',
-  'wsl.exe',
-  'bash.exe',
-  'putty.exe',
-  'xshell.exe',
-  'mobaxterm.exe'
-])
-
-const CONHOST_COPY_PASTE_EXES = new Set<string>([
-  'putty.exe',
-  'kitty.exe',
-  'xshell.exe',
-  'mobaxterm.exe'
-])
-
-const NON_TARGET_WINDOW_CLASSES = new Set<string>([
-  'shell_traywnd',
-  'shell_secondarytraywnd',
-  'notifyiconoverflowwindow',
-  'toplevelwindowforoverflowxamlisland',
-  'xamlexplorerhostislandwindow',
-  'progman',
-  'workerw',
-  'dv2controlhost',
-  'tasklistthumbnailwnd',
-  'multitaskingviewframe',
-  'windows.ui.core.corewindow'
-])
+const BACKSPACE_BATCH_CHARS = 20
+const BACKSPACE_BATCH_INTERVAL_MS = 8
 
 const MODIFIER_VKS = [
   VK_SHIFT,
@@ -118,368 +72,7 @@ const MODIFIER_VKS = [
 const EXTENDED_VKS = new Set<number>([VK_RCONTROL, VK_RMENU, VK_LWIN, VK_RWIN])
 const MASK_TRIGGER_VKS = new Set<number>([VK_MENU, VK_LMENU, VK_RMENU, VK_LWIN, VK_RWIN])
 
-export interface KeybdInputPayload {
-  wVk: number
-  wScan: number
-  dwFlags: number
-  time: number
-  dwExtraInfo: number
-}
-
-export interface InputEvent {
-  type: number
-  u: {
-    ki: KeybdInputPayload
-  }
-}
-
-export interface Win32Api {
-  inputSize: number
-  sendInput: (cInputs: number, pInputs: InputEvent[], cbSize: number) => number
-  getAsyncKeyState: (vKey: number) => number
-  getForegroundWindow: () => number
-  setForegroundWindow: (hWnd: number) => number
-  isWindow: (hWnd: number) => number
-  isIconic: (hWnd: number) => number
-  getWindowThreadProcessId: (hWnd: number, lpdwProcessId: number[]) => number
-  getClassNameW: (hWnd: number, lpClassName: Uint16Array, nMaxCount: number) => number
-  getWindowTextW: (hWnd: number, lpString: Uint16Array, nMaxCount: number) => number
-  getClipboardSequenceNumber: () => number
-  mapVirtualKeyW: (uCode: number, uMapType: number) => number
-  attachThreadInput: (idAttach: number, idAttachTo: number, fAttach: number) => number
-  registerClipboardFormatW: (lpszFormat: string) => number
-  openClipboard: (hWndNewOwner: number) => number
-  emptyClipboard: () => number
-  setClipboardData: (uFormat: number, hMem: number) => number
-  closeClipboard: () => number
-  getThreadDesktop: (dwThreadId: number) => number
-  getUserObjectInformationW: (
-    hObj: number,
-    nIndex: number,
-    pvInfo: Uint16Array,
-    nLength: number,
-    lpnLengthNeeded: number[]
-  ) => number
-  getCurrentThreadId: () => number
-  getCurrentProcess: () => number
-  openProcess: (dwDesiredAccess: number, bInheritHandle: number, dwProcessId: number) => number
-  queryFullProcessImageNameW: (
-    hProcess: number,
-    dwFlags: number,
-    lpExeName: Uint16Array,
-    lpdwSize: number[]
-  ) => number
-  closeHandle: (hObject: number) => number
-  globalAlloc: (uFlags: number, dwBytes: number) => number
-  globalLock: (hMem: number) => number
-  globalUnlock: (hMem: number) => number
-  globalFree: (hMem: number) => number
-  rtlMoveMemory: (destination: number, source: Uint8Array, length: number) => void
-  openProcessToken: (
-    processHandle: number,
-    desiredAccess: number,
-    tokenHandle: number[]
-  ) => number
-  getTokenIntegrityRid: (tokenHandle: number) => number | null
-  cfExcludeMonitor: number
-  cfCanIncludeHistory: number
-  cfCanUploadCloud: number
-}
-
-let cachedApi: Win32Api | null = null
-let testApiOverride = false
-let cachedSelfIntegrityRid: number | null = null
-
-function createDefaultMockApi(): Win32Api {
-  return {
-    inputSize: 40,
-    sendInput: (cInputs) => cInputs,
-    getAsyncKeyState: () => 0,
-    getForegroundWindow: () => 0,
-    setForegroundWindow: () => 1,
-    isWindow: () => 1,
-    isIconic: () => 0,
-    getWindowThreadProcessId: () => 1,
-    getClassNameW: () => 0,
-    getWindowTextW: () => 0,
-    getClipboardSequenceNumber: () => 0,
-    mapVirtualKeyW: (vk) => vk,
-    attachThreadInput: () => 1,
-    registerClipboardFormatW: () => 0,
-    openClipboard: () => 1,
-    emptyClipboard: () => 1,
-    setClipboardData: () => 1,
-    closeClipboard: () => 1,
-    getThreadDesktop: () => 1,
-    getUserObjectInformationW: () => 0,
-    getCurrentThreadId: () => 1,
-    getCurrentProcess: () => 1,
-    openProcess: () => 0,
-    queryFullProcessImageNameW: () => 0,
-    closeHandle: () => 1,
-    globalAlloc: () => 1,
-    globalLock: () => 1,
-    globalUnlock: () => 1,
-    globalFree: () => 0,
-    rtlMoveMemory: () => {},
-    openProcessToken: () => 0,
-    getTokenIntegrityRid: () => 0x2000,
-    cfExcludeMonitor: 0xc001,
-    cfCanIncludeHistory: 0xc002,
-    cfCanUploadCloud: 0xc003
-  }
-}
-
-export function setWin32ApiForTest(api: Partial<Win32Api> | null): void {
-  cachedSelfIntegrityRid = null
-  if (api === null) {
-    cachedApi = null
-    testApiOverride = false
-    return
-  }
-  cachedApi = {
-    ...createDefaultMockApi(),
-    ...api
-  }
-  testApiOverride = true
-}
-
-function ensureWin32(): Win32Api {
-  if (cachedApi !== null) return cachedApi
-  if (process.platform !== 'win32') {
-    throw new Error('win32Input is only supported on win32')
-  }
-  const koffi = require('koffi') as typeof KoffiNS
-  const MOUSEINPUT = koffi.struct('MOUSEINPUT', {
-    dx: 'int32',
-    dy: 'int32',
-    mouseData: 'uint32',
-    dwFlags: 'uint32',
-    time: 'uint32',
-    dwExtraInfo: 'uintptr_t'
-  })
-  const KEYBDINPUT = koffi.struct('KEYBDINPUT', {
-    wVk: 'uint16',
-    wScan: 'uint16',
-    dwFlags: 'uint32',
-    time: 'uint32',
-    dwExtraInfo: 'uintptr_t'
-  })
-  const INPUT_UNION = koffi.union('INPUT_UNION', { mi: MOUSEINPUT, ki: KEYBDINPUT })
-  const INPUT = koffi.struct('INPUT', { type: 'uint32', u: INPUT_UNION })
-
-  const inputSize = koffi.sizeof(INPUT)
-  if (inputSize !== 40) {
-    throw new Error(`INPUT size != 40 (got ${inputSize})`)
-  }
-
-  const user32 = koffi.load('user32.dll')
-  const kernel32 = koffi.load('kernel32.dll')
-  const advapi32 = koffi.load('advapi32.dll')
-
-  const sendInput = user32.func(
-    'uint32 __stdcall SendInput(uint32 cInputs, INPUT *pInputs, int cbSize)'
-  ) as (cInputs: number, pInputs: InputEvent[], cbSize: number) => number
-  const getAsyncKeyState = user32.func(
-    'int16 __stdcall GetAsyncKeyState(int vKey)'
-  ) as (vKey: number) => number
-  const getForegroundWindow = user32.func(
-    'intptr_t __stdcall GetForegroundWindow()'
-  ) as () => number
-  const setForegroundWindow = user32.func(
-    'int __stdcall SetForegroundWindow(intptr_t hWnd)'
-  ) as (hWnd: number) => number
-  const isWindow = user32.func(
-    'int __stdcall IsWindow(intptr_t hWnd)'
-  ) as (hWnd: number) => number
-  const isIconic = user32.func(
-    'int __stdcall IsIconic(intptr_t hWnd)'
-  ) as (hWnd: number) => number
-  const getWindowThreadProcessId = user32.func(
-    'uint32 __stdcall GetWindowThreadProcessId(intptr_t hWnd, _Out_ uint32 *lpdwProcessId)'
-  ) as (hWnd: number, lpdwProcessId: number[]) => number
-  const getClassNameW = user32.func(
-    'int __stdcall GetClassNameW(intptr_t hWnd, _Out_ uint16 *lpClassName, int nMaxCount)'
-  ) as (hWnd: number, lpClassName: Uint16Array, nMaxCount: number) => number
-  const getWindowTextW = user32.func(
-    'int __stdcall GetWindowTextW(intptr_t hWnd, _Out_ uint16 *lpString, int nMaxCount)'
-  ) as (hWnd: number, lpString: Uint16Array, nMaxCount: number) => number
-  const getClipboardSequenceNumber = user32.func(
-    'uint32 __stdcall GetClipboardSequenceNumber()'
-  ) as () => number
-  const mapVirtualKeyW = user32.func(
-    'uint32 __stdcall MapVirtualKeyW(uint32 uCode, uint32 uMapType)'
-  ) as (uCode: number, uMapType: number) => number
-  const attachThreadInput = user32.func(
-    'int __stdcall AttachThreadInput(uint32 idAttach, uint32 idAttachTo, int fAttach)'
-  ) as (idAttach: number, idAttachTo: number, fAttach: number) => number
-  const registerClipboardFormatW = user32.func(
-    'uint32 __stdcall RegisterClipboardFormatW(str16 lpszFormat)'
-  ) as (lpszFormat: string) => number
-  const openClipboard = user32.func(
-    'int __stdcall OpenClipboard(intptr_t hWndNewOwner)'
-  ) as (hWndNewOwner: number) => number
-  const emptyClipboard = user32.func(
-    'int __stdcall EmptyClipboard()'
-  ) as () => number
-  const setClipboardData = user32.func(
-    'intptr_t __stdcall SetClipboardData(uint32 uFormat, intptr_t hMem)'
-  ) as (uFormat: number, hMem: number) => number
-  const closeClipboard = user32.func(
-    'int __stdcall CloseClipboard()'
-  ) as () => number
-  const getThreadDesktop = user32.func(
-    'intptr_t __stdcall GetThreadDesktop(uint32 dwThreadId)'
-  ) as (dwThreadId: number) => number
-  const getUserObjectInformationW = user32.func(
-    'int __stdcall GetUserObjectInformationW(intptr_t hObj, int nIndex, _Out_ uint16 *pvInfo, uint32 nLength, _Out_ uint32 *lpnLengthNeeded)'
-  ) as (
-    hObj: number,
-    nIndex: number,
-    pvInfo: Uint16Array,
-    nLength: number,
-    lpnLengthNeeded: number[]
-  ) => number
-
-  const getCurrentThreadId = kernel32.func(
-    'uint32 __stdcall GetCurrentThreadId()'
-  ) as () => number
-  const getCurrentProcess = kernel32.func(
-    'intptr_t __stdcall GetCurrentProcess()'
-  ) as () => number
-  const openProcess = kernel32.func(
-    'intptr_t __stdcall OpenProcess(uint32 dwDesiredAccess, int bInheritHandle, uint32 dwProcessId)'
-  ) as (dwDesiredAccess: number, bInheritHandle: number, dwProcessId: number) => number
-  const queryFullProcessImageNameW = kernel32.func(
-    'int __stdcall QueryFullProcessImageNameW(intptr_t hProcess, uint32 dwFlags, _Out_ uint16 *lpExeName, _Inout_ uint32 *lpdwSize)'
-  ) as (
-    hProcess: number,
-    dwFlags: number,
-    lpExeName: Uint16Array,
-    lpdwSize: number[]
-  ) => number
-  const closeHandle = kernel32.func(
-    'int __stdcall CloseHandle(intptr_t hObject)'
-  ) as (hObject: number) => number
-  const globalAlloc = kernel32.func(
-    'intptr_t __stdcall GlobalAlloc(uint32 uFlags, uintptr_t dwBytes)'
-  ) as (uFlags: number, dwBytes: number) => number
-  const globalLock = kernel32.func(
-    'intptr_t __stdcall GlobalLock(intptr_t hMem)'
-  ) as (hMem: number) => number
-  const globalUnlock = kernel32.func(
-    'int __stdcall GlobalUnlock(intptr_t hMem)'
-  ) as (hMem: number) => number
-  const globalFree = kernel32.func(
-    'intptr_t __stdcall GlobalFree(intptr_t hMem)'
-  ) as (hMem: number) => number
-  const rtlMoveMemory = kernel32.func(
-    'void __stdcall RtlMoveMemory(intptr_t Destination, const uint8 *Source, uintptr_t Length)'
-  ) as (destination: number, source: Uint8Array, length: number) => void
-
-  const openProcessToken = advapi32.func(
-    'int __stdcall OpenProcessToken(intptr_t ProcessHandle, uint32 DesiredAccess, _Out_ intptr_t *TokenHandle)'
-  ) as (processHandle: number, desiredAccess: number, tokenHandle: number[]) => number
-  const getTokenInformationRaw = advapi32.func(
-    'int __stdcall GetTokenInformation(intptr_t TokenHandle, int TokenInformationClass, _Out_ uint8 *TokenInformation, uint32 TokenInformationLength, _Out_ uint32 *ReturnLength)'
-  ) as (
-    tokenHandle: number,
-    tokenInformationClass: number,
-    tokenInformation: Uint8Array,
-    tokenInformationLength: number,
-    returnLength: number[]
-  ) => number
-  const getSidSubAuthorityCount = advapi32.func(
-    'void* __stdcall GetSidSubAuthorityCount(void* pSid)'
-  ) as (pSid: unknown) => unknown
-  const getSidSubAuthority = advapi32.func(
-    'void* __stdcall GetSidSubAuthority(void* pSid, uint32 nSubAuthority)'
-  ) as (pSid: unknown, nSubAuthority: number) => unknown
-
-  const getTokenIntegrityRid = (tokenHandle: number): number | null => {
-    const buf = new Uint8Array(128)
-    const retLen = [0]
-    let ok = getTokenInformationRaw(
-      tokenHandle,
-      TOKEN_INTEGRITY_LEVEL_CLASS,
-      buf,
-      buf.length,
-      retLen
-    )
-    let activeBuf = buf
-    if (!ok && (retLen[0] ?? 0) > buf.length) {
-      activeBuf = new Uint8Array(retLen[0])
-      ok = getTokenInformationRaw(
-        tokenHandle,
-        TOKEN_INTEGRITY_LEVEL_CLASS,
-        activeBuf,
-        activeBuf.length,
-        retLen
-      )
-    }
-    if (!ok) return null
-    const pSid = koffi.decode(activeBuf, 'void*') as unknown
-    if (!pSid) return null
-    const pCount = getSidSubAuthorityCount(pSid)
-    if (!pCount) return null
-    const subCount = koffi.decode(pCount, 'uint8') as number
-    if (subCount <= 0) return null
-    const pRid = getSidSubAuthority(pSid, subCount - 1)
-    if (!pRid) return null
-    return (koffi.decode(pRid, 'uint32') as number) >>> 0
-  }
-
-  const cfExcludeMonitor = Number(
-    registerClipboardFormatW('ExcludeClipboardContentFromMonitorProcessing')
-  )
-  const cfCanIncludeHistory = Number(registerClipboardFormatW('CanIncludeInClipboardHistory'))
-  const cfCanUploadCloud = Number(registerClipboardFormatW('CanUploadToCloudClipboard'))
-
-  cachedApi = {
-    inputSize,
-    sendInput,
-    getAsyncKeyState,
-    getForegroundWindow,
-    setForegroundWindow,
-    isWindow,
-    isIconic,
-    getWindowThreadProcessId,
-    getClassNameW,
-    getWindowTextW,
-    getClipboardSequenceNumber,
-    mapVirtualKeyW,
-    attachThreadInput,
-    registerClipboardFormatW,
-    openClipboard,
-    emptyClipboard,
-    setClipboardData,
-    closeClipboard,
-    getThreadDesktop,
-    getUserObjectInformationW,
-    getCurrentThreadId,
-    getCurrentProcess,
-    openProcess,
-    queryFullProcessImageNameW,
-    closeHandle,
-    globalAlloc,
-    globalLock,
-    globalUnlock,
-    globalFree,
-    rtlMoveMemory,
-    openProcessToken,
-    getTokenIntegrityRid,
-    cfExcludeMonitor,
-    cfCanIncludeHistory,
-    cfCanUploadCloud
-  }
-  return cachedApi
-}
-
-export function makeKeyEvent(
-  wVk: number,
-  dwFlags: number,
-  apiOverride?: Win32Api
-): InputEvent {
+function makeKeyEvent(wVk: number, dwFlags: number, apiOverride?: Win32Api): InputEvent {
   const api = apiOverride ?? ensureWin32()
   const wScan = wVk === VK_MASK ? 0 : api.mapVirtualKeyW(wVk, MAPVK_VK_TO_VSC) & 0xffff
   const finalFlags = dwFlags | (EXTENDED_VKS.has(wVk) ? KEYEVENTF_EXTENDEDKEY : 0)
@@ -529,8 +122,7 @@ function sendChordWithModifierGuard(buildChord: (api: Win32Api) => InputEvent[])
     prefix.push(makeKeyEvent(VK_MASK, 0, api))
     prefix.push(makeKeyEvent(VK_MASK, KEYEVENTF_KEYUP, api))
     for (const vk of stuckAltOrWin) {
-      const flags = KEYEVENTF_KEYUP | (EXTENDED_VKS.has(vk) ? KEYEVENTF_EXTENDEDKEY : 0)
-      prefix.push(makeKeyEvent(vk, flags, api))
+      prefix.push(makeKeyEvent(vk, KEYEVENTF_KEYUP, api))
     }
   }
   const allEvents = prefix.length > 0 ? [...prefix, ...buildChord(api)] : buildChord(api)
@@ -555,74 +147,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/**
- * Pure classifier by executable basename (fallback when window class is generic).
- */
-export function classifyExeName(
-  exeName: string,
-  extraWtExes: ReadonlySet<string> = new Set(),
-  extraConhostExes: ReadonlySet<string> = new Set()
-): WindowInputKind {
-  const lower = exeName.trim().toLowerCase()
-  if (WT_EXE_NAMES.has(lower) || extraWtExes.has(lower)) return 'wt'
-  if (CONHOST_EXE_NAMES.has(lower) || extraConhostExes.has(lower)) return 'conhost'
-  return 'normal'
-}
-
-/**
- * Pure classifier combining Win32 window class name and executable name.
- * Checking window class first ensures console client processes (e.g. claude.exe, agy.exe,
- * python.exe, ssh.exe) running inside ConsoleWindowClass are never misclassified as 'normal'.
- */
-export function classifyTerminalWindow(
-  className: string,
-  exeName: string,
-  extraWtExes: ReadonlySet<string> = new Set(),
-  extraConhostExes: ReadonlySet<string> = new Set()
-): WindowInputKind {
-  const lowerClass = className.trim().toLowerCase()
-  if (WT_CLASS_NAMES.has(lowerClass)) return 'wt'
-  if (CONHOST_CLASS_NAMES.has(lowerClass) || lowerClass.startsWith('cygwin/x')) return 'conhost'
-  return classifyExeName(exeName, extraWtExes, extraConhostExes)
-}
-
-export function classifyTerminalCopyKind(
-  className: string,
-  exeName: string,
-  extraWtExes: ReadonlySet<string> = new Set(),
-  extraConhostExes: ReadonlySet<string> = new Set()
-): WindowInputKind {
-  const lowerClass = className.trim().toLowerCase()
-  if (WT_CLASS_NAMES.has(lowerClass)) return 'wt'
-  if (CONHOST_CLASS_NAMES.has(lowerClass) || lowerClass.startsWith('cygwin/x')) return 'conhost'
-  const lowerExe = exeName.trim().toLowerCase()
-  if (CONHOST_COPY_PASTE_EXES.has(lowerExe) || extraConhostExes.has(lowerExe)) return 'conhost'
-  return classifyExeName(lowerExe, extraWtExes, extraConhostExes)
-}
-
-export function classifyTerminalPasteKind(
-  className: string,
-  exeName: string,
-  extraWtExes: ReadonlySet<string> = new Set(),
-  extraConhostExes: ReadonlySet<string> = new Set()
-): WindowInputKind {
-  const lowerClass = className.trim().toLowerCase()
-  if (WT_CLASS_NAMES.has(lowerClass)) return 'wt'
-  if (CONHOST_CLASS_NAMES.has(lowerClass) || lowerClass.startsWith('cygwin/x')) return 'conhost'
-  const lowerExe = exeName.trim().toLowerCase()
-  if (CONHOST_COPY_PASTE_EXES.has(lowerExe) || extraConhostExes.has(lowerExe)) return 'conhost'
-  return classifyExeName(lowerExe, extraWtExes, extraConhostExes)
-}
-
-/**
- * Pure check for taskbar, desktop wallpaper, or OS shell overlay window classes
- * that should never be recorded as a paste target.
- */
-export function isNonTargetWindowClass(className: string): boolean {
-  const lower = className.trim().toLowerCase()
-  return lower === '' || NON_TARGET_WINDOW_CLASSES.has(lower)
-}
-
 export function isWindow(hwnd: number): boolean {
   if (!hwnd) return false
   try {
@@ -641,7 +165,7 @@ export function isWindowMinimized(hwnd: number): boolean {
   }
 }
 
-export function getWindowPid(hwnd: number): number {
+function getWindowPid(hwnd: number): number {
   if (!hwnd) return 0
   try {
     const api = ensureWin32()
@@ -653,7 +177,7 @@ export function getWindowPid(hwnd: number): number {
   }
 }
 
-export function getWindowClassName(hwnd: number): string {
+function getWindowClassName(hwnd: number): string {
   if (!hwnd) return ''
   try {
     const api = ensureWin32()
@@ -666,7 +190,7 @@ export function getWindowClassName(hwnd: number): string {
   }
 }
 
-export function getWindowExeName(hwnd: number): string {
+function getWindowExeName(hwnd: number): string {
   if (!hwnd) return ''
   try {
     const api = ensureWin32()
@@ -689,7 +213,7 @@ export function getWindowExeName(hwnd: number): string {
       api.closeHandle(hProc)
     }
   } catch (err) {
-    console.warn('[fp] getWindowExeName failed:', err)
+    logWarn(`getWindowExeName failed: ${err instanceof Error ? err.message : String(err)}`)
     return ''
   }
 }
@@ -720,33 +244,7 @@ export function classifyWindowKind(
   extraWtExes: ReadonlySet<string> = new Set(),
   extraConhostExes: ReadonlySet<string> = new Set()
 ): WindowInputKind {
-  return classifyTerminalPasteKind(
-    getWindowClassName(hwnd),
-    getWindowExeName(hwnd),
-    extraWtExes,
-    extraConhostExes
-  )
-}
-
-export function classifyWindowCopyKind(
-  hwnd: number,
-  extraWtExes: ReadonlySet<string> = new Set(),
-  extraConhostExes: ReadonlySet<string> = new Set()
-): WindowInputKind {
-  return classifyTerminalCopyKind(
-    getWindowClassName(hwnd),
-    getWindowExeName(hwnd),
-    extraWtExes,
-    extraConhostExes
-  )
-}
-
-export function classifyWindowPasteKind(
-  hwnd: number,
-  extraWtExes: ReadonlySet<string> = new Set(),
-  extraConhostExes: ReadonlySet<string> = new Set()
-): WindowInputKind {
-  return classifyTerminalPasteKind(
+  return classifyTerminalWindow(
     getWindowClassName(hwnd),
     getWindowExeName(hwnd),
     extraWtExes,
@@ -768,15 +266,11 @@ export function isValidExternalTargetWindow(hwnd: number, selfPid = process.pid)
   return !isNonTargetWindowClass(cls)
 }
 
-export function captureExternalTargetHwnd(selfPid = process.pid): number {
-  const hwnd = getForegroundWindow()
-  if (!isValidExternalTargetWindow(hwnd, selfPid)) return 0
-  return hwnd
-}
-
 function getSelfIntegrityRid(api: Win32Api): number | null {
-  if (!testApiOverride && cachedSelfIntegrityRid !== null) {
-    return cachedSelfIntegrityRid
+  const override = hasTestWin32ApiOverride()
+  const cached = getCachedSelfRid()
+  if (!override && cached !== null) {
+    return cached
   }
   const tokOut = [0]
   try {
@@ -787,8 +281,8 @@ function getSelfIntegrityRid(api: Win32Api): number | null {
     }
     try {
       const rid = api.getTokenIntegrityRid(hTok)
-      if (!testApiOverride && rid !== null) {
-        cachedSelfIntegrityRid = rid
+      if (!override && rid !== null) {
+        setCachedSelfRid(rid)
       }
       return rid
     } finally {
@@ -803,16 +297,16 @@ function getSelfIntegrityRid(api: Win32Api): number | null {
  * Detect whether Win32 UIPI will block SendInput from reaching `hwnd`
  * because the target window runs at a higher integrity level than our process.
  *
- * @note 当无法读取自身进程完整性级别时（极少见），函数保守返回 false（不报 UIPI）。
- *       这避免了 Alt-T 以管理员权限运行时对同等权限目标窗口的误判。
- *       漏报时 SendInput 静默失败，上层错误处理会将译文保留在剪贴板供手动粘贴。
+ * When self integrity level cannot be determined (`selfRid === null`), this conservatively
+ * returns `false` so elevated instances never falsely reject peers; actual SendInput
+ * failures fall back safely to keeping the translation in the clipboard.
  */
 export function isWindowElevatedOverSelf(hwnd: number, selfPid = process.pid): boolean {
   if (!hwnd) return false
   try {
     const api = ensureWin32()
     const selfRid = getSelfIntegrityRid(api)
-    if (selfRid !== null && selfRid >= SECURITY_MANDATORY_HIGH_RID) {
+    if (selfRid === null) {
       return false
     }
 
@@ -821,7 +315,6 @@ export function isWindowElevatedOverSelf(hwnd: number, selfPid = process.pid): b
 
     const hProc = Number(api.openProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid))
     if (hProc === 0) {
-      // Cannot open even LIMITED_INFORMATION -> protected / higher-integrity process
       return true
     }
 
@@ -835,17 +328,6 @@ export function isWindowElevatedOverSelf(hwnd: number, selfPid = process.pid): b
       try {
         const targetRid = api.getTokenIntegrityRid(hTok)
         if (targetRid === null) return false
-        if (selfRid === null) {
-          // 无法读取自身进程完整性级别时（极少见，常见于受限沙箱或 API 异常），
-          // 采用保守策略：不报 UIPI 阻断。
-          // 理由：误报 UIPI 会导致用户看到"请手动粘贴"提示且失去自动注入能力，
-          // 体验损耗远大于漏报。漏报时 SendInput 静默失败，译文仍在剪贴板，
-          // 用户可手动粘贴，损失有限。
-          return false
-        }
-        // 调用方 pasteTextToWindow / selectionService 在 isWindowElevatedOverSelf 返回 false 时
-        // 直接尝试 SendInput。若注入失败，sendInput 返回注入数 != 期望数，
-        // 上层 catch 会将译文保留在剪贴板，不会崩溃。
         return targetRid > selfRid
       } finally {
         api.closeHandle(hTok)
@@ -854,19 +336,6 @@ export function isWindowElevatedOverSelf(hwnd: number, selfPid = process.pid): b
       api.closeHandle(hProc)
     }
   } catch {
-    return false
-  }
-}
-
-export const isBlockedByUipi = isWindowElevatedOverSelf
-
-export function setForegroundWindow(hwnd: number): boolean {
-  if (!hwnd) return false
-  try {
-    const api = ensureWin32()
-    return api.setForegroundWindow(hwnd) !== 0
-  } catch (err) {
-    console.warn('[fp] setForegroundWindow failed:', err)
     return false
   }
 }
@@ -889,7 +358,6 @@ export function focusWindow(hwnd: number): boolean {
     const dummyPid = [0]
     const fgTid = fg !== 0 ? api.getWindowThreadProcessId(fg, dummyPid) : 0
 
-    // Unlock Win32 foreground lock with benign mask key before AttachThreadInput handoff
     try {
       sendEvents([makeKeyEvent(VK_MASK, 0, api), makeKeyEvent(VK_MASK, KEYEVENTF_KEYUP, api)])
     } catch {
@@ -910,7 +378,7 @@ export function focusWindow(hwnd: number): boolean {
 
     return Number(api.getForegroundWindow()) === hwnd
   } catch (err) {
-    console.warn('[fp] focusWindow failed:', err)
+    logWarn(`focusWindow failed: ${err instanceof Error ? err.message : String(err)}`)
     return false
   }
 }
@@ -927,12 +395,10 @@ function setZeroDwordFormat(api: Win32Api, formatId: number): void {
 
 /**
  * Write UTF-16 text to the Win32 clipboard tagged with Microsoft's exclusion formats
- * (`ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory=0`,
- * `CanUploadToCloudClipboard=0`) so sentinels and transient translations never pollute
- * `Win+V` Clipboard History, Cloud Sync, or third-party clipboard managers.
+ * so sentinels and transient translations never pollute `Win+V` Clipboard History or Cloud Sync.
  */
 export async function writePrivateClipboardText(text: string): Promise<boolean> {
-  if (!testApiOverride && process.platform !== 'win32') return false
+  if (!hasTestWin32ApiOverride() && process.platform !== 'win32') return false
   try {
     const api = ensureWin32()
     const utf16Buf = Buffer.from(text + '\0', 'utf16le')
@@ -978,7 +444,7 @@ export async function writePrivateClipboardText(text: string): Promise<boolean> 
       api.closeClipboard()
     }
   } catch (err) {
-    console.warn('[fp] writePrivateClipboardText failed:', err)
+    logWarn(`writePrivateClipboardText failed: ${err instanceof Error ? err.message : String(err)}`)
     return false
   }
 }
@@ -1000,42 +466,23 @@ export async function releaseModifiers(): Promise<void> {
       events.push(makeKeyEvent(VK_MASK, KEYEVENTF_KEYUP, api))
     }
     for (const vk of stillDown) {
-      const flags = KEYEVENTF_KEYUP | (EXTENDED_VKS.has(vk) ? KEYEVENTF_EXTENDEDKEY : 0)
-      events.push(makeKeyEvent(vk, flags, api))
+      events.push(makeKeyEvent(vk, KEYEVENTF_KEYUP, api))
     }
 
     try {
       sendEvents(events)
     } catch (err) {
-      console.warn('[fp] releaseModifiers SendInput warning:', err)
+      logWarn(`releaseModifiers SendInput warning: ${err instanceof Error ? err.message : String(err)}`)
     }
 
     await sleep(10)
     const remaining = getDownModifiers(api)
     for (const vk of remaining) {
-      console.log(`[fp] modifier still down: 0x${vk.toString(16)}`)
+      logInfo(`modifier still down: 0x${vk.toString(16)}`)
     }
   } catch (err) {
-    console.warn('[fp] releaseModifiers failed:', err)
+    logWarn(`releaseModifiers failed: ${err instanceof Error ? err.message : String(err)}`)
   }
-}
-
-export function sendCtrlC(): void {
-  sendChordWithModifierGuard((api) => [
-    makeKeyEvent(VK_LCONTROL, 0, api),
-    makeKeyEvent(VK_C, 0, api),
-    makeKeyEvent(VK_C, KEYEVENTF_KEYUP, api),
-    makeKeyEvent(VK_LCONTROL, KEYEVENTF_KEYUP, api)
-  ])
-}
-
-export function sendCtrlV(): void {
-  sendChordWithModifierGuard((api) => [
-    makeKeyEvent(VK_LCONTROL, 0, api),
-    makeKeyEvent(VK_V, 0, api),
-    makeKeyEvent(VK_V, KEYEVENTF_KEYUP, api),
-    makeKeyEvent(VK_LCONTROL, KEYEVENTF_KEYUP, api)
-  ])
 }
 
 export function sendCopyForWindow(kind: WindowInputKind): void {
@@ -1059,7 +506,12 @@ export function sendCopyForWindow(kind: WindowInputKind): void {
     ])
     return
   }
-  sendCtrlC()
+  sendChordWithModifierGuard((api) => [
+    makeKeyEvent(VK_LCONTROL, 0, api),
+    makeKeyEvent(VK_C, 0, api),
+    makeKeyEvent(VK_C, KEYEVENTF_KEYUP, api),
+    makeKeyEvent(VK_LCONTROL, KEYEVENTF_KEYUP, api)
+  ])
 }
 
 export function sendPasteForWindow(kind: WindowInputKind): void {
@@ -1083,11 +535,16 @@ export function sendPasteForWindow(kind: WindowInputKind): void {
     ])
     return
   }
-  sendCtrlV()
+  sendChordWithModifierGuard((api) => [
+    makeKeyEvent(VK_LCONTROL, 0, api),
+    makeKeyEvent(VK_V, 0, api),
+    makeKeyEvent(VK_V, KEYEVENTF_KEYUP, api),
+    makeKeyEvent(VK_LCONTROL, KEYEVENTF_KEYUP, api)
+  ])
 }
 
 export async function sendBackspaces(charCount: number): Promise<void> {
-  const safeCount = Math.min(MAX_BACKSPACE_CHARS, Math.max(0, Math.floor(charCount)))
+  const safeCount = Math.min(MAX_TRANSLATE_CHARS, Math.max(0, Math.floor(charCount)))
   if (safeCount === 0) return
 
   const api = ensureWin32()
@@ -1118,8 +575,6 @@ export function getForegroundWindow(): number {
 
 /**
  * Return the Win32 desktop name attached to the current thread (e.g. "Default" on interactive WinSta0\Default).
- * Isolated CLI sandboxes (such as "exebox-*") return a non-Default name, allowing main boot to refuse
- * hijacking the single-instance lock on an invisible desktop.
  */
 export function getCurrentDesktopName(): string {
   if (process.platform !== 'win32') return 'Default'

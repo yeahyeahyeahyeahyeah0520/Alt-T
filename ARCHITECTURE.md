@@ -35,7 +35,7 @@ flowchart TB
 
     subgraph L3["L3 — Platform Adapters & Win32 FFI"]
         P_HOST["hostPlatform.ts<br/>Win32 / macOS / X11 / Wayland Seam"]
-        P_WIN32["win32Input.ts<br/>koffi SendInput · UIPI · Classifiers"]
+        P_WIN32["win32Input.ts · win32Ffi.ts · win32Classifier.ts<br/>koffi SendInput · UIPI · Classifiers"]
         P_CLIP["clipboardBackup.ts<br/>Multi-Format Snapshot · Win+V Exclusion"]
         P_SCR["screenGeometry.ts · autoLaunch.ts"]
     end
@@ -52,7 +52,7 @@ flowchart TB
     end
 
     subgraph L0["L0 — Pure Shared Contracts (Zero Node/Electron/DOM)"]
-        SH["src/shared/<br/>types.ts · config.ts · text.ts · popupState.ts"]
+        SH["src/shared/<br/>types.ts · config.ts · messages.ts · text.ts · popupState.ts"]
     end
 
     Renderer -- "window.api (IPC)" --> Preload
@@ -77,7 +77,8 @@ flowchart TB
 ### Layer Rules Enforced by `scripts/check-rules.mjs`
 - **`core-no-electron`**: `src/shared/**` and `src/main/core/**` cannot import or `require` `electron`, `koffi`, or `undici`.
 - **`renderer-no-main` & `renderer-no-http`**: `src/renderer/**` and `src/preload/**` cannot import `src/main/**`; renderer cannot call `fetch()`, `XMLHttpRequest`, or `axios`.
-- **`platform-guard`**: Direct `process.platform` checks are isolated inside `src/main/platform/**`.
+- **`platform-guard`**: Direct `process.platform` and `os.platform()` checks are isolated inside `src/main/platform/**`.
+- **`platform-no-service-state`**: `src/main/platform/**` cannot import stateful application services (`configStore`, `selectionService`, `hotkeyService`, `translateService`).
 - **`popup-close-guard`**: `popupWindow.ts` `'close'` listener must guard with `isQuitting()` before `preventDefault() + hide()`.
 
 ---
@@ -226,13 +227,13 @@ stateDiagram-v2
 flowchart TD
     START(["Windows Startup .lnk or Manual Launch"]) --> VBS_TYPE{"Launcher"}
 
-    VBS_TYPE -- "start-silent.vbs" --> STRIP1["Pure ASCII No-BOM VBS<br/>Strip ELECTRON_RUN_AS_NODE / TTL_SMOKE / FP_SMOKE<br/>Verify electron.exe & out\\main\\index.js"]
+    VBS_TYPE -- "start-silent.vbs" --> STRIP1["Pure ASCII No-BOM VBS<br/>Strip ELECTRON_RUN_AS_NODE / FP_SMOKE<br/>Verify electron.exe & out\\main\\index.js"]
     STRIP1 --> RUN_ONCE["shell.Run(&quot;electron.exe .&quot;, 0, False)"]
 
     VBS_TYPE -- "watchdog.vbs" --> STRIP2["Pure ASCII No-BOM VBS<br/>Strip env vars & verify binaries"]
     STRIP2 --> WD_LOOP["exitCode = shell.Run(&quot;electron.exe .&quot;, 0, True)"]
 
-    WD_LOOP --> CHECK_EXIT{"exitCode == 0<br/>OR clean-exit.flag<br/>OR legacy intentional-quit.flag?"}
+    WD_LOOP --> CHECK_EXIT{"exitCode == 0<br/>OR Alt-T\\clean-exit.flag?"}
     CHECK_EXIT -- "Yes (Intentional Quit)" --> WD_STOP(["Watchdog exits cleanly (0)"])
     CHECK_EXIT -- "No (Crash / Non-zero)" --> BACKOFF["Reset backoff to 2s if uptime >= 30s<br/>Else double backoff (2s .. 60s) & Sleep"]
     BACKOFF --> WD_LOOP
@@ -242,9 +243,9 @@ flowchart TD
         BOOT1["2. Guard: isRunningOnHiddenDesktop() & requestSingleInstanceLock()"]
         BOOT2["3. app.whenReady(): deny default permissions,<br/>enforce PRODUCTION_CSP, clearCleanExit()"]
         BOOT3["4. configStore.load() (DPAPI hydrate + EPERM retry)<br/>Create popupWindow, tray, registerIpc"]
-        BOOT4["5. syncAutoLaunch(cfg.autoLaunch):<br/>Skip if ELECTRON_RENDERER_URL<br/>Remove orphan legacy watchdog shortcut<br/>Use PORTABLE_EXECUTABLE_FILE if portable<br/>Compare readShortcutLink before rewrite"]
+        BOOT4["5. syncAutoLaunch(cfg.autoLaunch):<br/>Skip if ELECTRON_RENDERER_URL<br/>Use PORTABLE_EXECUTABLE_FILE if portable<br/>Compare readShortcutLink before rewrite"]
         BOOT5["6. Register global hotkeys + 60s healMissingHotkeys()<br/>+ coalesced powerMonitor (resume/unlock/active)"]
-        QUIT["before-quit:<br/>setQuitting(true) -> markCleanExit()<br/>(clean-exit.flag + legacy intentional-quit.flag)<br/>hotkeyService.dispose() -> tray.destroy() -> translateService.disposeAll()"]
+        QUIT["before-quit:<br/>setQuitting(true) -> markCleanExit()<br/>(clean-exit.flag)<br/>hotkeyService.dispose() -> tray.destroy() -> translateService.disposeAll()"]
 
         BOOT0 --> BOOT1 --> BOOT2 --> BOOT3 --> BOOT4 --> BOOT5
         BOOT5 -- "Tray Quit / app.quit()" --> QUIT
@@ -260,13 +261,14 @@ flowchart TD
 
 | Layer | Path | Primary Responsibility |
 | :--- | :--- | :--- |
-| **L0** | `src/shared/types.ts` | `AppConfig`, `DEFAULT_CONFIG`, hardened `DEFAULT_PROMPTS`, `IPC_CHANNELS`, `RendererApi` |
+| **L0** | `src/shared/types.ts` | `AppConfig`, `DEFAULT_CONFIG`, hardened `DEFAULT_PROMPTS`, `IPC_CHANNELS`, `RendererApi`, `MAX_TRANSLATE_CHARS` |
 | **L0** | `src/shared/config.ts` | `mergeConfig`, `isValidGlobalAccelerator`, `normalizeAcceleratorKey`, `findDuplicateHotkeys`, protected prompts |
+| **L0** | `src/shared/messages.ts` | Centralized Chinese user-facing messages (`MSG`) |
 | **L0** | `src/shared/text.ts` | `detectTargetLang`, `countGraphemes` (`Intl.Segmenter`), `countTerminalEraseChars`, `normalizeTerminalCapturedText` |
 | **L0** | `src/shared/popupState.ts` | Pure popup UI state transitions, `directPaste` lang lock, blur cleanup, `5000`-char validation |
 | **L1** | `src/main/core/*` | `baseUrl.ts` (`isLoopbackBaseUrl`), `clipboardPolicy.ts`, `geometry.ts`, `openaiPayload.ts`, `sseParser.ts`, `redact.ts` |
 | **L2** | `src/main/providers/*` | `httpClient.ts` (`undici`), `openaiCompatible.ts`, `edgeDirect.ts`, `fallback.ts` |
-| **L3** | `src/main/platform/*` | `win32Input.ts`, `hostPlatform.ts`, `clipboardBackup.ts`, `screenGeometry.ts`, `autoLaunch.ts` |
+| **L3** | `src/main/platform/*` | `win32Classifier.ts`, `win32Ffi.ts`, `win32Input.ts`, `hostPlatform.ts`, `clipboardBackup.ts`, `screenGeometry.ts`, `autoLaunch.ts` |
 | **L4** | `src/main/services/*` | `selectionService.ts`, `hotkeyService.ts`, `translateService.ts`, `configStore.ts`, `logger.ts` |
 | **L5** | `src/main/*` | `index.ts`, `ipc.ts`, `tray.ts`, `appState.ts`, `windows/popupWindow.ts`, `windows/settingsWindow.ts` |
 | **P / R** | `src/preload/`, `src/renderer/` | `contextBridge` API with fallback, `PopupView.vue`, `SettingsView.vue`, `useTranslate.ts` |

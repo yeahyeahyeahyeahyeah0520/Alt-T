@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { clipboard as electronClipboard, ClipboardItem as ElectronClipboardItem } from 'electron'
 import { shouldRestoreClipboard } from '../core/clipboardPolicy'
+import { logInfo, logWarn } from '../services/logger'
 import {
   getClipboardSequenceNumber as hostGetClipboardSequenceNumber,
   writeHistoryExcludedClipboardText
@@ -198,7 +199,7 @@ export function createClipboardManager(
       (fmt) => !KNOWN_FORMAT_PREFIXES.some((prefix) => fmt.startsWith(prefix))
     )
     if (extraFormats.length > 0) {
-      console.log('[fp] clipboard has non-backed formats:', extraFormats.join(', '))
+      logInfo(`clipboard has non-backed formats: ${extraFormats.join(', ')}`)
     }
 
     return { text, html, rtf, imageBlob, imageMime, formats }
@@ -235,7 +236,7 @@ export function createClipboardManager(
         undefined
       )
     } catch (err) {
-      console.warn('[fp] restoreClipboard failed:', err)
+      logWarn(`restoreClipboard failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -293,7 +294,7 @@ export function createClipboardManager(
   }
 
   async function writeSentinel(): Promise<string> {
-    const sentinel = '\u200b__FP_' + crypto.randomUUID() + '__'
+    const sentinel = '\u200b__AT_' + crypto.randomUUID() + '__'
     await writeTransientClipboardText(sentinel)
     return sentinel
   }

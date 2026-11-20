@@ -1,4 +1,10 @@
-import type { OpenAIProviderConfig } from '../../shared/types'
+import {
+  ProviderError,
+  type OpenAIProviderConfig,
+  type ProviderId,
+  type ProviderRequest,
+  type TranslateProvider
+} from '../../shared/types'
 import { buildChatCompletionsUrl, isLoopbackBaseUrl } from '../core/baseUrl'
 import {
   buildRequestBody,
@@ -7,20 +13,12 @@ import {
 } from '../core/openaiPayload'
 import { SseLineParser } from '../core/sseParser'
 import {
-  AbortMarker,
   createLinkedAbort,
   mapFetchError,
-  redactSecret,
   sanitizeHttpErrorSnippet,
   TimeoutMarker,
   type HttpClient
 } from './httpClient'
-import {
-  ProviderError,
-  type ProviderId,
-  type ProviderRequest,
-  type TranslateProvider
-} from './types'
 
 const DEFAULT_NON_STREAM_TIMEOUT_MS = 6000
 const DEFAULT_FIRST_TOKEN_TIMEOUT_MS = 10000
@@ -135,7 +133,8 @@ export class OpenAICompatibleProvider implements TranslateProvider {
         method: 'POST',
         headers,
         body,
-        signal: controller.signal
+        signal: controller.signal,
+        provider: this.id
       })
 
       if (!res.ok) {
@@ -165,9 +164,6 @@ export class OpenAICompatibleProvider implements TranslateProvider {
 
       return extractNonStreamText(json)
     } catch (err) {
-      if (err instanceof AbortMarker) {
-        throw mapFetchError(err, this.id, controller.signal, cfg.apiKey)
-      }
       throw mapFetchError(err, this.id, controller.signal, cfg.apiKey)
     } finally {
       clearTimeout(timer)
@@ -210,7 +206,8 @@ export class OpenAICompatibleProvider implements TranslateProvider {
         method: 'POST',
         headers,
         body,
-        signal: controller.signal
+        signal: controller.signal,
+        provider: this.id
       })
 
       if (!res.ok) {
@@ -286,12 +283,6 @@ export class OpenAICompatibleProvider implements TranslateProvider {
       completedNormally = true
       return accumulated
     } catch (err) {
-      if (err instanceof ProviderError && err.info.provider === this.id) {
-        throw new ProviderError({
-          ...err.info,
-          message: redactSecret(err.info.message, cfg.apiKey)
-        })
-      }
       throw mapFetchError(err, this.id, controller.signal, cfg.apiKey)
     } finally {
       if (timer !== null) {

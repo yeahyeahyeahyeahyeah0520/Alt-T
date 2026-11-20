@@ -66,16 +66,3 @@ export function openSettingsWindow(): BrowserWindow {
 
   return win
 }
-
-export function getSettingsWindow(): BrowserWindow | null {
-  if (settingsWin !== null && !settingsWin.isDestroyed()) {
-    return settingsWin
-  }
-  return null
-}
-
-export function closeSettingsWindow(): void {
-  if (settingsWin !== null && !settingsWin.isDestroyed()) {
-    settingsWin.close()
-  }
-}

@@ -23,7 +23,6 @@ import { logError, logWarn } from '../services/logger'
 export interface PopupWindowDeps {
   getConfig: () => AppConfig
   onResized?: (width: number, height: number) => void
-  isTranslating?: () => boolean
 }
 
 export interface PopupWindowController {
@@ -34,18 +33,15 @@ export interface PopupWindowController {
   toggleInput(): void
   toggleDirectInput(): void
   pin(pinned: boolean): boolean
-  isPinned(): boolean
   hide(): void
   getLastTargetHandle(): number
-  focusTargetAndHide(): { targetHandle: number; focused: boolean }
   resize(height: number): void
-  pushShow(payload: PopupShowPush): void
   pushNotify(payload: NotifyPush): void
   send(channel: string, payload: unknown): void
   beginTranslation(requestId: string): void
   endTranslation(requestId: string): void
+  setPasting(active: boolean): void
   getWebContents(): WebContents | null
-  getBrowserWindow(): BrowserWindow | null
   whenLoaded(): Promise<boolean>
 }
 
@@ -57,6 +53,7 @@ interface QueuedMessage {
 const CRASH_WINDOW_MS = 5000
 const MAX_CRASH_RELOADS_IN_WINDOW = 3
 const PROGRAMMATIC_RESIZE_GUARD_MS = 250
+const MAX_PENDING_QUEUE = 32
 
 export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController {
   const cfg = deps.getConfig()
@@ -91,7 +88,9 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
   })
 
   let pinned = false
+  let pasting = false
   let loaded = false
+  let crashHalted = false
   let initialLoadSettled = false
   let lastTargetHandle = 0
   const pendingQueue: QueuedMessage[] = []
@@ -125,16 +124,13 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
 
   function loadPopupPage(): void {
     if (win.isDestroyed()) return
+    crashHalted = false
     const devUrl = process.env['ELECTRON_RENDERER_URL']
     if (devUrl) {
       void win.loadURL(`${devUrl}/main.html`)
     } else {
       void win.loadFile(join(__dirname, '../renderer/main.html'))
     }
-  }
-
-  function isCurrentlyTranslating(): boolean {
-    return activeTranslations.size > 0 || (deps.isTranslating ? deps.isTranslating() : false)
   }
 
   function flushQueue(): void {
@@ -152,6 +148,7 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
 
   win.webContents.on('did-finish-load', () => {
     loaded = true
+    crashHalted = false
     crashCountInWindow = 0
     crashWindowStartAt = 0
     flushQueue()
@@ -177,6 +174,8 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
     }
 
     if (crashCountInWindow > MAX_CRASH_RELOADS_IN_WINDOW) {
+      crashHalted = true
+      pendingQueue.length = 0
       logError(`popup renderer crash loop detected (reason=${details.reason}), halting auto-reload`)
       return
     }
@@ -204,7 +203,7 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
 
   win.on('blur', () => {
     if (win.isDestroyed()) return
-    if (!pinned && !isCurrentlyTranslating()) {
+    if (!pinned && activeTranslations.size === 0 && !pasting) {
       win.hide()
     }
   })
@@ -247,12 +246,16 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
   function send(channel: string, payload: unknown): void {
     if (win.isDestroyed() || win.webContents.isDestroyed()) return
     if (!loaded) {
+      if (crashHalted) return
       if (channel === IPC_CHANNELS.popupShow) {
         for (let i = pendingQueue.length - 1; i >= 0; i--) {
           if (pendingQueue[i].channel === IPC_CHANNELS.popupShow) {
             pendingQueue.splice(i, 1)
           }
         }
+      }
+      if (pendingQueue.length >= MAX_PENDING_QUEUE) {
+        pendingQueue.shift()
       }
       pendingQueue.push({ channel, payload })
       return
@@ -358,15 +361,6 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
     return lastTargetHandle
   }
 
-  function focusTargetAndHide(): { targetHandle: number; focused: boolean } {
-    const target = lastTargetHandle
-    const focused = target !== 0 ? focusTarget(target) : false
-    if (!win.isDestroyed()) {
-      win.hide()
-    }
-    return { targetHandle: target, focused }
-  }
-
   function toggleInput(): void {
     if (win.isDestroyed()) return
     if (win.isVisible() && win.isFocused()) {
@@ -397,10 +391,6 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
     return pinned
   }
 
-  function isPinned(): boolean {
-    return pinned
-  }
-
   function resize(height: number): void {
     if (win.isDestroyed()) return
     const bounds = win.getBounds()
@@ -423,13 +413,13 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
     activeTranslations.delete(requestId)
   }
 
+  function setPasting(active: boolean): void {
+    pasting = active
+  }
+
   function getWebContents(): WebContents | null {
     if (win.isDestroyed() || win.webContents.isDestroyed()) return null
     return win.webContents
-  }
-
-  function getBrowserWindow(): BrowserWindow | null {
-    return win.isDestroyed() ? null : win
   }
 
   function whenLoaded(): Promise<boolean> {
@@ -444,18 +434,15 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
     toggleInput,
     toggleDirectInput,
     pin,
-    isPinned,
     hide,
     getLastTargetHandle,
-    focusTargetAndHide,
     resize,
-    pushShow,
     pushNotify,
     send,
     beginTranslation,
     endTranslation,
+    setPasting,
     getWebContents,
-    getBrowserWindow,
     whenLoaded
   }
 }

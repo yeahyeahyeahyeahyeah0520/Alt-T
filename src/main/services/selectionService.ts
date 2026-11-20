@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { clipboard, Notification } from 'electron'
+import { createHistoryEntry } from '../../shared/config'
 import { MSG } from '../../shared/messages'
 import {
   countTerminalEraseChars,
@@ -9,6 +10,7 @@ import {
 } from '../../shared/text'
 import {
   IPC_CHANNELS,
+  MAX_TRANSLATE_CHARS,
   ProviderError,
   type AppConfig,
   type HistoryItem,
@@ -47,6 +49,7 @@ import {
   isTargetMinimized,
   isWindowElevatedOverSelf,
   releasePressedModifiers,
+  type CustomTerminalExeSets,
   type WindowInputKind
 } from '../platform/hostPlatform'
 import { configStore } from './configStore'
@@ -77,8 +80,8 @@ export interface SelectionRuntimeDeps {
     focusTarget: (handle: number) => boolean
     getActiveTargetHandle: () => number
     getClipboardSequenceNumber: () => number
-    getTargetCopyKind: (handle: number) => WindowInputKind
-    getTargetPasteKind: (handle: number) => WindowInputKind
+    getTargetCopyKind: (handle: number, customSets?: CustomTerminalExeSets) => WindowInputKind
+    getTargetPasteKind: (handle: number, customSets?: CustomTerminalExeSets) => WindowInputKind
     getWindowTitle: (handle: number) => string
     isOwnProcessWindow: (handle: number) => boolean
     isTargetAlive: (handle: number) => boolean
@@ -88,7 +91,7 @@ export interface SelectionRuntimeDeps {
   }
   configStore: {
     get: () => AppConfig
-    addHistory: (item: HistoryItem) => void
+    addHistory: (item: HistoryItem) => AppConfig | null | void
   }
   notifySystem: (body: string) => void
   sleep: (ms: number) => Promise<void>
@@ -105,6 +108,7 @@ export interface SelectionServiceDeps {
   onTranslationStart?: (requestId: string) => void
   onTranslationEnd?: (requestId: string) => void
   notifyPopup?: (payload: NotifyPush) => void
+  onHistoryChanged?: (cfg: AppConfig) => void
   runtime?: Partial<SelectionRuntimeDeps>
 }
 
@@ -179,40 +183,47 @@ export function setSelectionRuntimeForTest(override: Partial<SelectionRuntimeDep
   }
 }
 
-export function isSelectionBusy(): boolean {
-  return busy
-}
-
 export function cancelActiveReplaceFlow(): void {
   if (activeReplaceController !== null && !activeReplaceController.signal.aborted) {
     activeReplaceController.abort()
   }
 }
 
-function recordHistoryIfEnabled(
+function buildCustomExeSets(cfg: AppConfig): CustomTerminalExeSets {
+  return {
+    extraWt: new Set((cfg.customWtExeNames ?? []).map((s) => s.toLowerCase())),
+    extraConhost: new Set((cfg.customConhostExeNames ?? []).map((s) => s.toLowerCase()))
+  }
+}
+
+function recordHistory(
   rt: SelectionRuntimeDeps,
+  activeDeps: SelectionServiceDeps | null,
   fromText: string,
   toText: string,
   provider: ProviderId,
   target: TargetLang
 ): void {
-  const cfg = rt.configStore.get()
-  if (!cfg.historyEnabled) return
-  rt.configStore.addHistory({
-    id: crypto.randomUUID(),
-    at: rt.now(),
-    from: fromText.slice(0, 2000),
-    to: toText.slice(0, 4000),
-    provider,
-    target
-  })
+  const updated = rt.configStore.addHistory(
+    createHistoryEntry({
+      id: crypto.randomUUID(),
+      at: rt.now(),
+      from: fromText,
+      to: toText,
+      provider,
+      target
+    })
+  )
+  if (updated) {
+    activeDeps?.onHistoryChanged?.(updated)
+  }
 }
 
-export function validatePastePreconditions(
+function validatePastePreconditions(
+  rt: SelectionRuntimeDeps,
   targetHandle: number,
   textToPaste: string
 ): PopupPasteReply | null {
-  const rt = getRuntime()
   if (busy) {
     return { ok: false, message: MSG.BUSY_LOCKED }
   }
@@ -232,25 +243,29 @@ export function validatePastePreconditions(
   return null
 }
 
+function getPasteErrorMessage(err: unknown): string {
+  const errMsg = err instanceof Error ? err.message : String(err)
+  return errMsg === 'MACOS_ACCESSIBILITY_DENIED'
+    ? MSG.MACOS_ACCESSIBILITY_DENIED_PASTE
+    : MSG.PASTE_BLOCKED
+}
+
 export async function pasteTextToWindow(
   targetHandle: number,
   textToPaste: string,
-  hidePopup?: (() => void) | boolean
+  hidePopup?: () => void
 ): Promise<PopupPasteReply> {
   const rt = getRuntime()
-  const preError = validatePastePreconditions(targetHandle, textToPaste)
+  const preError = validatePastePreconditions(rt, targetHandle, textToPaste)
   if (preError !== null) {
     return preError
   }
-
-  const hideFn = typeof hidePopup === 'function' ? hidePopup : undefined
-  const focusAlreadyVerified = typeof hidePopup === 'boolean' ? hidePopup : false
 
   busy = true
   try {
     if (!rt.host.canInjectKeystrokes()) {
       await rt.clipboard.writeText(textToPaste)
-      hideFn?.()
+      hidePopup?.()
       rt.notifySystem(MSG.CLIPBOARD_ONLY_MODE)
       return { ok: true }
     }
@@ -258,20 +273,19 @@ export async function pasteTextToWindow(
     if (rt.host.isWindowElevatedOverSelf(targetHandle)) {
       await rt.clipboard.writeText(textToPaste)
       rt.host.focusTarget(targetHandle)
-      hideFn?.()
-      const msg = MSG.UIPI_PASTE_FALLBACK
+      hidePopup?.()
       logWarn(`pasteTextToWindow UIPI fallback for handle=${targetHandle}`)
-      rt.notifySystem(msg)
+      rt.notifySystem(MSG.UIPI_PASTE_FALLBACK)
       return { ok: true }
     }
 
     await rt.host.releasePressedModifiers()
 
-    if (!focusAlreadyVerified || rt.host.getActiveTargetHandle() !== targetHandle) {
+    if (rt.host.getActiveTargetHandle() !== targetHandle) {
       rt.host.focusTarget(targetHandle)
     }
 
-    hideFn?.()
+    hidePopup?.()
 
     let confirmed = rt.host.getActiveTargetHandle() === targetHandle
     for (let attempt = 0; !confirmed && attempt < FOREGROUND_POLL_ATTEMPTS; attempt++) {
@@ -282,15 +296,15 @@ export async function pasteTextToWindow(
     if (!confirmed) {
       await rt.clipboard.writeText(textToPaste)
       const currentActive = rt.host.getActiveTargetHandle()
-      const msg = MSG.TARGET_FOREGROUND_LOST
       logWarn(`pasteTextToWindow foreground mismatch: expected=${targetHandle}, actual=${currentActive}`)
-      rt.notifySystem(msg)
-      return { ok: false, message: msg }
+      rt.notifySystem(MSG.TARGET_FOREGROUND_LOST)
+      return { ok: false, message: MSG.TARGET_FOREGROUND_LOST }
     }
 
     await rt.sleep(30)
 
-    const pasteKind = rt.host.getTargetPasteKind(targetHandle)
+    const customSets = buildCustomExeSets(rt.configStore.get())
+    const pasteKind = rt.host.getTargetPasteKind(targetHandle, customSets)
     const snap = await rt.clipboardBackup.backupClipboard()
     await rt.clipboardBackup.writeTransientClipboardText(textToPaste)
     const seqAfterWrite = rt.host.getClipboardSequenceNumber()
@@ -299,11 +313,7 @@ export async function pasteTextToWindow(
       rt.host.dispatchPasteShortcut(pasteKind)
     } catch (err) {
       await rt.clipboard.writeText(textToPaste)
-      const errMsg = err instanceof Error ? err.message : String(err)
-      const msg =
-        errMsg === 'MACOS_ACCESSIBILITY_DENIED'
-          ? MSG.MACOS_ACCESSIBILITY_DENIED_PASTE
-          : MSG.PASTE_BLOCKED
+      const msg = getPasteErrorMessage(err)
       logError('pasteTextToWindow dispatchPaste failed', err)
       rt.notifySystem(msg)
       return { ok: true }
@@ -353,7 +363,7 @@ function showS11PopupFallback(
   } else {
     rt.notifySystem(warnMessage)
   }
-  recordHistoryIfEnabled(rt, text, translatedText, usedProvider, to)
+  recordHistory(rt, activeDeps, text, translatedText, usedProvider, to)
 }
 
 type CaptureResult =
@@ -362,17 +372,27 @@ type CaptureResult =
       rawText: string
       normalizedText: string
       pasteKind: WindowInputKind
-      copyKind: WindowInputKind
       titleAtStart: string
       snap: ClipboardSnapshot
       seqAfterRestore: number
     }
-  | { ok: false; reason: 'uipi' | 'no-selection' | 'own-window' | 'copy-failed' | 'too-long' }
+  | {
+      ok: false
+      reason:
+        | 'own-window'
+        | 'uipi'
+        | 'copy-failed'
+        | 'macos-accessibility-denied'
+        | 'no-selection'
+        | 'non-text'
+        | 'too-long'
+    }
 
 async function captureSelectionText(
   handle: number,
   rt: SelectionRuntimeDeps,
-  mode: 'replace' | 'show' = 'replace'
+  cfg: AppConfig,
+  mode: 'replace' | 'show'
 ): Promise<CaptureResult> {
   if (rt.host.isOwnProcessWindow(handle)) {
     return { ok: false, reason: 'own-window' }
@@ -381,8 +401,9 @@ async function captureSelectionText(
     return { ok: false, reason: 'uipi' }
   }
 
-  const copyKind = rt.host.getTargetCopyKind(handle)
-  const pasteKind = rt.host.getTargetPasteKind(handle)
+  const customSets = buildCustomExeSets(cfg)
+  const copyKind = rt.host.getTargetCopyKind(handle, customSets)
+  const pasteKind = rt.host.getTargetPasteKind(handle, customSets)
   const titleAtStart = pasteKind === 'wt' ? rt.host.getWindowTitle(handle) : ''
 
   await rt.host.releasePressedModifiers()
@@ -394,11 +415,11 @@ async function captureSelectionText(
     rt.host.dispatchCopyShortcut(copyKind)
   } catch (err) {
     await rt.clipboardBackup.restoreClipboard(snap)
+    logError('dispatchCopyShortcut failed', err)
     const errMsg = err instanceof Error ? err.message : String(err)
     if (errMsg === 'MACOS_ACCESSIBILITY_DENIED') {
-      rt.notifySystem(MSG.MACOS_ACCESSIBILITY_DENIED_COPY)
+      return { ok: false, reason: 'macos-accessibility-denied' }
     }
-    logError('dispatchCopyShortcut failed', err)
     return { ok: false, reason: 'copy-failed' }
   }
 
@@ -427,11 +448,10 @@ async function captureSelectionText(
   const seqAfterRestore = rt.host.getClipboardSequenceNumber()
 
   if (normalizedText.trim() === '') {
-    rt.notifySystem(MSG.NO_TEXT_SELECTED)
-    return { ok: false, reason: 'no-selection' }
+    return { ok: false, reason: 'non-text' }
   }
 
-  if (normalizedText.length > 5000) {
+  if (normalizedText.length > MAX_TRANSLATE_CHARS) {
     return { ok: false, reason: 'too-long' }
   }
 
@@ -440,7 +460,6 @@ async function captureSelectionText(
     rawText: rawCaptured,
     normalizedText,
     pasteKind,
-    copyKind,
     titleAtStart,
     snap,
     seqAfterRestore
@@ -450,12 +469,13 @@ async function captureSelectionText(
 function runShowMode(params: {
   text: string
   to: TargetLang
+  cfg: AppConfig
   rt: SelectionRuntimeDeps
   activeDeps: SelectionServiceDeps
   watchdog: AbortController
+  clearWatchdog: () => void
 }): void {
-  const { text, to, rt, activeDeps, watchdog } = params
-  const cfg = rt.configStore.get()
+  const { text, to, cfg, rt, activeDeps, watchdog, clearWatchdog } = params
   const requestId = crypto.randomUUID()
 
   activeDeps.showPopupAtCursor({
@@ -466,10 +486,31 @@ function runShowMode(params: {
   })
   activeDeps.onTranslationStart?.(requestId)
 
+  const pushTimeoutError = (): void => {
+    const error: TranslateErrorInfo = {
+      code: 'TIMEOUT',
+      provider: cfg.primaryProvider,
+      message: MSG.TRANSLATE_TIMEOUT,
+      retryable: true
+    }
+    const payload: TranslateErrorPush = { requestId, error }
+    activeDeps.pushToPopup(IPC_CHANNELS.translateError, payload)
+  }
+
   if (cfg.openai.stream) {
-    const onWatchdogAbort = (): void => {
-      activeDeps.translateService.cancel(requestId)
+    let settled = false
+    const finishStream = (): void => {
+      settled = true
+      clearWatchdog()
+      watchdog.signal.removeEventListener('abort', onWatchdogAbort)
       activeDeps.onTranslationEnd?.(requestId)
+    }
+
+    const onWatchdogAbort = (): void => {
+      if (settled) return
+      finishStream()
+      activeDeps.translateService.cancel(requestId)
+      pushTimeoutError()
     }
     watchdog.signal.addEventListener('abort', onWatchdogAbort, { once: true })
 
@@ -478,60 +519,65 @@ function runShowMode(params: {
       { text, to },
       {
         onChunk: (delta) => {
+          if (settled || watchdog.signal.aborted) return
           const payload: TranslateChunkPush = { requestId, delta }
           activeDeps.pushToPopup(IPC_CHANNELS.translateChunk, payload)
         },
         onDone: (result) => {
-          watchdog.signal.removeEventListener('abort', onWatchdogAbort)
-          activeDeps.onTranslationEnd?.(requestId)
+          if (settled) return
+          finishStream()
           const payload: TranslateDonePush = { requestId, result }
           activeDeps.pushToPopup(IPC_CHANNELS.translateDone, payload)
-          recordHistoryIfEnabled(rt, text, result.text, result.provider, to)
+          recordHistory(rt, activeDeps, text, result.text, result.provider, to)
         },
         onError: (error) => {
-          watchdog.signal.removeEventListener('abort', onWatchdogAbort)
-          activeDeps.onTranslationEnd?.(requestId)
+          if (settled) return
+          finishStream()
           const payload: TranslateErrorPush = { requestId, error }
           activeDeps.pushToPopup(IPC_CHANNELS.translateError, payload)
         }
       }
     )
-  } else {
-    void activeDeps.translateService
-      .translateOnce({ text, to }, watchdog.signal, requestId)
-      .then((result) => {
-        activeDeps.onTranslationEnd?.(requestId)
-        const payload: TranslateDonePush = { requestId, result }
-        activeDeps.pushToPopup(IPC_CHANNELS.translateDone, payload)
-        recordHistoryIfEnabled(rt, text, result.text, result.provider, to)
-      })
-      .catch((err: unknown) => {
-        activeDeps.onTranslationEnd?.(requestId)
-        if (err instanceof ProviderError && err.info.code === 'ABORTED') {
-          return
-        }
-        const latestCfg = rt.configStore.get()
-        const error: TranslateErrorInfo =
-          err instanceof ProviderError
-            ? err.info
-            : {
-                code: 'NETWORK',
-                provider: latestCfg.primaryProvider,
-                message: err instanceof Error ? err.message : String(err),
-                retryable: true
-              }
-        const payload: TranslateErrorPush = { requestId, error }
-        activeDeps.pushToPopup(IPC_CHANNELS.translateError, payload)
-      })
+    return
   }
+
+  void activeDeps.translateService
+    .translateOnce({ text, to }, watchdog.signal, requestId)
+    .then((result) => {
+      clearWatchdog()
+      activeDeps.onTranslationEnd?.(requestId)
+      const payload: TranslateDonePush = { requestId, result }
+      activeDeps.pushToPopup(IPC_CHANNELS.translateDone, payload)
+      recordHistory(rt, activeDeps, text, result.text, result.provider, to)
+    })
+    .catch((err: unknown) => {
+      clearWatchdog()
+      activeDeps.onTranslationEnd?.(requestId)
+      if (watchdog.signal.aborted) {
+        pushTimeoutError()
+        return
+      }
+      if (err instanceof ProviderError && err.info.code === 'ABORTED') {
+        return
+      }
+      const error: TranslateErrorInfo =
+        err instanceof ProviderError
+          ? err.info
+          : {
+              code: 'NETWORK',
+              provider: rt.configStore.get().primaryProvider,
+              message: err instanceof Error ? err.message : String(err),
+              retryable: true
+            }
+      const payload: TranslateErrorPush = { requestId, error }
+      activeDeps.pushToPopup(IPC_CHANNELS.translateError, payload)
+    })
 }
 
-async function runReplaceModeTerminal(params: {
+async function pasteReplacementAndRecord(params: {
   translatedText: string
-  rawText: string
+  sourceText: string
   pasteKind: WindowInputKind
-  handle: number
-  titleAtStart: string
   snap: ClipboardSnapshot
   seqAfterRestore: number
   rt: SelectionRuntimeDeps
@@ -539,11 +585,67 @@ async function runReplaceModeTerminal(params: {
   to: TargetLang
   usedProvider: ProviderId
   usedFallback: boolean
-  watchdog: AbortController
+  logContext: string
+}): Promise<'done' | 'error'> {
+  const {
+    translatedText,
+    sourceText,
+    pasteKind,
+    snap,
+    seqAfterRestore,
+    rt,
+    activeDeps,
+    to,
+    usedProvider,
+    usedFallback,
+    logContext
+  } = params
+
+  const curSeq = rt.host.getClipboardSequenceNumber()
+  const snap2 =
+    seqAfterRestore > 0 && curSeq === seqAfterRestore
+      ? snap
+      : await rt.clipboardBackup.backupClipboard()
+
+  await rt.clipboardBackup.writeTransientClipboardText(translatedText)
+  const seqAfterWrite = rt.host.getClipboardSequenceNumber()
+
+  try {
+    rt.host.dispatchPasteShortcut(pasteKind)
+  } catch (err) {
+    // Keep the translation on the user's clipboard so they can paste manually
+    await rt.clipboard.writeText(translatedText)
+    rt.notifySystem(getPasteErrorMessage(err))
+    logError(logContext, err)
+    return 'error'
+  }
+
+  await rt.sleep(POST_PASTE_RESTORE_DELAY_MS)
+  await rt.clipboardBackup.restoreClipboardIfUnchanged(snap2, translatedText, seqAfterWrite)
+  recordHistory(rt, activeDeps, sourceText, translatedText, usedProvider, to)
+  return 'done'
+}
+
+async function runReplaceModeTerminal(params: {
+  translatedText: string
+  rawText: string
+  normalizedText: string
+  pasteKind: WindowInputKind
+  handle: number
+  titleAtStart: string
+  snap: ClipboardSnapshot
+  seqAfterRestore: number
+  rt: SelectionRuntimeDeps
+  activeDeps: SelectionServiceDeps
+  cfg: AppConfig
+  to: TargetLang
+  usedProvider: ProviderId
+  usedFallback: boolean
 }): Promise<'done' | 'error'> {
   const {
     translatedText,
     rawText,
+    normalizedText,
     pasteKind,
     handle,
     titleAtStart,
@@ -551,20 +653,19 @@ async function runReplaceModeTerminal(params: {
     seqAfterRestore,
     rt,
     activeDeps,
+    cfg,
     to,
     usedProvider,
     usedFallback
   } = params
 
-  const cfg = rt.configStore.get()
   const eraseCount = countTerminalEraseChars(rawText)
-  const text = pasteKind !== 'normal' ? normalizeTerminalCapturedText(rawText) : rawText
 
   if (!cfg.terminalAutoBackspace || eraseCount === 0) {
     const requestId = crypto.randomUUID()
     activeDeps.showPopupAtCursor({
       mode: 'selection',
-      text,
+      text: normalizedText,
       requestId,
       to,
       directPaste: true
@@ -582,7 +683,7 @@ async function runReplaceModeTerminal(params: {
       level: 'info',
       message: MSG.TERMINAL_SELECTION_TRANSLATED
     })
-    recordHistoryIfEnabled(rt, text, translatedText, usedProvider, to)
+    recordHistory(rt, activeDeps, normalizedText, translatedText, usedProvider, to)
     return 'done'
   }
 
@@ -595,7 +696,7 @@ async function runReplaceModeTerminal(params: {
     showS11PopupFallback(
       activeDeps,
       rt,
-      text,
+      normalizedText,
       to,
       translatedText,
       usedProvider,
@@ -609,28 +710,19 @@ async function runReplaceModeTerminal(params: {
   await rt.host.dispatchBackspaces(eraseCount)
   await rt.sleep(20)
 
-  const curSeq = rt.host.getClipboardSequenceNumber()
-  const snap2 =
-    seqAfterRestore > 0 && curSeq === seqAfterRestore
-      ? snap
-      : await rt.clipboardBackup.backupClipboard()
-
-  await rt.clipboardBackup.writeTransientClipboardText(translatedText)
-  const seqAfterWrite = rt.host.getClipboardSequenceNumber()
-
-  try {
-    rt.host.dispatchPasteShortcut(pasteKind)
-  } catch (err) {
-    await rt.clipboardBackup.restoreClipboard(snap2)
-    rt.notifySystem(MSG.PASTE_SHORTCUT_FAILED)
-    logError('dispatchPasteShortcut failed (terminal auto-backspace)', err)
-    return 'error'
-  }
-
-  await rt.sleep(POST_PASTE_RESTORE_DELAY_MS)
-  await rt.clipboardBackup.restoreClipboardIfUnchanged(snap2, translatedText, seqAfterWrite)
-  recordHistoryIfEnabled(rt, text, translatedText, usedProvider, to)
-  return 'done'
+  return pasteReplacementAndRecord({
+    translatedText,
+    sourceText: normalizedText,
+    pasteKind,
+    snap,
+    seqAfterRestore,
+    rt,
+    activeDeps,
+    to,
+    usedProvider,
+    usedFallback,
+    logContext: 'dispatchPasteShortcut failed (terminal auto-backspace)'
+  })
 }
 
 async function runReplaceModeNormal(params: {
@@ -677,30 +769,19 @@ async function runReplaceModeNormal(params: {
 
   await rt.host.releasePressedModifiers()
 
-  const curSeq = rt.host.getClipboardSequenceNumber()
-  const snap2 =
-    seqAfterRestore > 0 && curSeq === seqAfterRestore
-      ? snap
-      : await rt.clipboardBackup.backupClipboard()
-
-  await rt.clipboardBackup.writeTransientClipboardText(translatedText)
-  const seqAfterWrite = rt.host.getClipboardSequenceNumber()
-
-  try {
-    rt.host.dispatchPasteShortcut(pasteKind)
-  } catch (err) {
-    await rt.clipboardBackup.restoreClipboard(snap2)
-    rt.notifySystem(MSG.PASTE_SHORTCUT_FAILED)
-    logError('dispatchPasteShortcut failed', err)
-    return 'error'
-  }
-
-  await rt.sleep(POST_PASTE_RESTORE_DELAY_MS)
-  await rt.clipboardBackup.restoreClipboardIfUnchanged(snap2, translatedText, seqAfterWrite)
-
-  recordHistoryIfEnabled(rt, text, translatedText, usedProvider, to)
-
-  return 'done'
+  return pasteReplacementAndRecord({
+    translatedText,
+    sourceText: text,
+    pasteKind,
+    snap,
+    seqAfterRestore,
+    rt,
+    activeDeps,
+    to,
+    usedProvider,
+    usedFallback,
+    logContext: 'dispatchPasteShortcut failed'
+  })
 }
 
 export async function runSelectionFlow(
@@ -714,10 +795,20 @@ export async function runSelectionFlow(
 
   const rt = getRuntime()
   const watchdog = new AbortController()
-  const watchdogTimer = setTimeout(() => {
+  let watchdogTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    watchdogTimer = null
     logWarn(`selection flow watchdog timeout (${rt.watchdogTimeoutMs}ms)`)
     watchdog.abort()
   }, rt.watchdogTimeoutMs)
+  watchdogTimer.unref?.()
+
+  const clearWatchdog = (): void => {
+    if (watchdogTimer !== null) {
+      clearTimeout(watchdogTimer)
+      watchdogTimer = null
+    }
+  }
+  let watchdogOwnedByShow = false
 
   if (mode === 'replace') {
     activeReplaceController = watchdog
@@ -739,7 +830,8 @@ export async function runSelectionFlow(
       return 'error'
     }
 
-    const capture = await captureSelectionText(handle0, rt, mode)
+    const cfg = rt.configStore.get()
+    const capture = await captureSelectionText(handle0, rt, cfg, mode)
     if (!capture.ok) {
       switch (capture.reason) {
         case 'own-window':
@@ -749,6 +841,9 @@ export async function runSelectionFlow(
           logWarn(`selection flow blocked by privilege boundary on handle=${handle0}`)
           rt.notifySystem(MSG.UIPI_BLOCKED)
           return 'no-selection'
+        case 'macos-accessibility-denied':
+          rt.notifySystem(MSG.MACOS_ACCESSIBILITY_DENIED_COPY)
+          return 'error'
         case 'copy-failed':
           rt.notifySystem(MSG.COPY_SHORTCUT_FAILED)
           return 'error'
@@ -758,6 +853,9 @@ export async function runSelectionFlow(
             return 'done'
           }
           rt.notifySystem(MSG.NO_SELECTION_OR_UIPI)
+          return 'no-selection'
+        case 'non-text':
+          rt.notifySystem(MSG.NO_TEXT_SELECTED)
           return 'no-selection'
         case 'too-long':
           rt.notifySystem(MSG.TEXT_TOO_LONG)
@@ -775,7 +873,8 @@ export async function runSelectionFlow(
     logInfo(`selection captured: "${truncatePreview(text, 40)}" -> to=${to} kind=${capture.pasteKind}`)
 
     if (mode === 'show') {
-      runShowMode({ text, to, rt, activeDeps: deps, watchdog })
+      watchdogOwnedByShow = true
+      runShowMode({ text, to, cfg, rt, activeDeps: deps, watchdog, clearWatchdog })
       return 'done'
     }
 
@@ -812,6 +911,7 @@ export async function runSelectionFlow(
       return await runReplaceModeTerminal({
         translatedText,
         rawText: capture.rawText,
+        normalizedText: text,
         pasteKind: capture.pasteKind,
         handle: handle0,
         titleAtStart: capture.titleAtStart,
@@ -819,10 +919,10 @@ export async function runSelectionFlow(
         seqAfterRestore: capture.seqAfterRestore,
         rt,
         activeDeps: deps,
+        cfg,
         to,
         usedProvider,
-        usedFallback,
-        watchdog
+        usedFallback
       })
     }
 
@@ -844,7 +944,9 @@ export async function runSelectionFlow(
     rt.notifySystem(err instanceof Error ? err.message : String(err))
     return 'error'
   } finally {
-    clearTimeout(watchdogTimer)
+    if (!watchdogOwnedByShow) {
+      clearWatchdog()
+    }
     if (activeReplaceController === watchdog) {
       activeReplaceController = null
     }

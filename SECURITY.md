@@ -98,7 +98,7 @@ Because disabling `RendererCodeIntegrity` relaxes Chromium's renderer DLL signat
 If you discover a security vulnerability in **Alt-T**:
 
 1. **Do NOT open a public GitHub issue** with exploit details, credentials, or personal paths.
-2. Report privately via **GitHub Security Advisories** (`https://github.com/yeahyeahyeahyeahyeah0520/alt-t/security/advisories/new`).
+2. Report privately via **GitHub Security Advisories** (`https://github.com/yeahyeahyeahyeahyeah0520/flashprompt/security/advisories/new`).
 3. Please include:
    - Affected file(s) / component(s) and Alt-T version
    - Step-by-step reproduction instructions

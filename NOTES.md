@@ -1,17 +1,14 @@
 # Engineering Notes & Evolution Log (`NOTES.md`)
 
-This document records verified runtime observations, architectural deviations from the original `SPEC.md`, and hardening enhancements implemented for the public open-source release of **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/alt-t`).
+This document records verified runtime observations, architectural deviations from the original `SPEC.md`, and hardening enhancements implemented for the public open-source release of **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/flashprompt`).
 
 ---
 
 ## 1. Branding & Lineage: Clean-Room Decoupling to Alt-T
 
-1. **Initial Private Specification (`SPEC.md`)**: Originally drafted as an internal specification referencing `TTime Lite`.
-2. **IP & Trademark Decoupling**: Upstream TTime carries a custom license with commercial restrictions, appearance patent claims, and strict trademark protections. To eliminate any copyright, trademark, or appearance patent infringement risk, the project is 100% clean-room implemented from scratch and unified publicly under **Alt-T** (`yeahyeahyeahyeahyeah0520/alt-t`, MIT license, `AppUserModelId = 'com.alt-t.app'`).
-3. **Defensive Legacy Compatibility**:
-   - **Dual Smoke Flags**: Both `FP_SMOKE=1` and legacy `TTL_SMOKE=1` are accepted in `src/main/index.ts`, `scripts/smoke-launch.mjs`, and `src/main/platform/autoLaunch.ts`.
-   - **Legacy Watchdog & Quit Flag Cleanup**: `configStore.ts` and `autoLaunch.ts` clean up legacy test artifacts (`TTime Lite Watchdog.lnk`, `clean-exit.flag`, `intentional-quit.flag`) so existing test machines upgrade cleanly.
-   - **Read-Only Diagnostics**: `scripts/diagnose-hotkeys.mjs` inspects candidate userData folders (`Alt-T`, `TTime Lite`, `ttime-lite`) read-only via `fs.lstatSync` without stealing `SingletonLock` or printing secrets.
+1. **Initial Private Specification (`SPEC.md`)**: Originally drafted as an internal specification referencing an earlier tool.
+2. **Clean-Room Open-Source Implementation**: Built clean-room from scratch and unified publicly under **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/flashprompt`, MIT license, `AppUserModelId = 'com.alt-t.app'`), with legacy migration shims (`TTL_SMOKE`, `TTime Lite` watchdog paths, `ocr-translate`) subsequently pruned for simplicity.
+3. **Read-Only Diagnostics**: `scripts/diagnose-hotkeys.mjs` inspects the `Alt-T` userData folder read-only via `fs.lstatSync` without stealing `SingletonLock` or printing secrets.
 
 ---
 
@@ -31,9 +28,8 @@ This document records verified runtime observations, architectural deviations fr
 - **Why Removed**:
   - Eliminated fullscreen transparent capture overlays, `desktopCapturer` display-matching edge cases on mixed-DPI setups, and Vision-only request paths to keep the main bundle minimal and fast-booting.
   - Replaced `Alt+W` with **`Alt+T` (`directInputTranslate`)**—a cursor-anchored floating input bar (`directPaste: true`, locked to `'en'`) where pressing `Enter` translates developer thoughts and injects them directly into terminals or AI coding CLIs.
-- **Prompt Migration & Compatibility**:
+- **Prompt Migration**:
   - Replaced `ocr-translate` in `DEFAULT_PROMPTS` with **`cli-prompt`** (`CLI 提示词精炼`) and hardened **`translate`** (`通用与技术翻译`) against prompt injection (treating input strictly as literal source text, preserving backticks, fenced code blocks, file paths, URLs, CLI `--flags`, env vars, `/slash` commands, and `@mentions`).
-  - `src/shared/config.ts` retains `'ocr-translate'` in `PROTECTED_PROMPT_IDS` and `TEXT_EXCLUDED_PROMPT_IDS` so legacy `config.json` files do not accidentally use `'ocr-translate'` as the text translation prompt.
 
 ---
 
@@ -42,17 +38,17 @@ This document records verified runtime observations, architectural deviations fr
 ### 4.1 Win32 Input, UIPI, Terminal Classification & Clipboard (`src/main/platform/`, `selectionService.ts`)
 - **Terminal `Alt+R` Option A / Option B**:
   - `SPEC.md` assumed uniform `Ctrl+C` / `Ctrl+V` in-place replacement.
-  - Added class-first terminal detection (`CASCADIA_HOSTING_WINDOW_CLASS` -> `'wt'`; `ConsoleWindowClass`, `VirtualConsoleClass`, `mintty`, `putty`, `putty-nd` -> `'conhost'`), `warp.exe` / `waveterm.exe` -> `'wt'`, split copy/paste classification (`putty.exe`, `kitty.exe`, `xshell.exe`, `mobaxterm.exe` routed to `'conhost'` `Ctrl+Insert` / `Shift+Insert`), and explicit exclusion of `Code.exe` (`'normal'`) so VS Code / Cursor / Antigravity editor selections continue using `Ctrl+C`/`Ctrl+V` while integrated terminal users are guided to `Alt+T`.
+  - Added class-first terminal detection (`CASCADIA_HOSTING_WINDOW_CLASS` -> `'wt'`; `ConsoleWindowClass`, `VirtualConsoleClass`, `mintty`, `putty`, `putty-nd` -> `'conhost'`), `warp.exe` / `waveterm.exe` -> `'wt'`, unified `putty.exe`, `kitty.exe`, `xshell.exe`, `mobaxterm.exe` into `CONHOST_EXE_NAMES` (`Ctrl+Insert` / `Shift+Insert`), user-configurable `customWtExeNames` / `customConhostExeNames`, and explicit exclusion of `Code.exe` (`'normal'`) so VS Code / Cursor / Antigravity editor selections continue using `Ctrl+C`/`Ctrl+V` while integrated terminal users are guided to `Alt+T`.
   - **Option A (default, `terminalAutoBackspace: false`)**: Selecting text in a terminal and pressing `Alt+R` safely opens the translation popup (`directPaste: true`) so pressing `Enter` pastes at the cursor without blindly erasing shell prompts.
   - **Option B (`terminalAutoBackspace: true`)**: Counts extended grapheme clusters via `Intl.Segmenter(undefined, { granularity: 'grapheme' })`, verifies foreground handle and Windows Terminal tab title (`GetWindowTextW`), releases modifiers, dispatches batched `VK_BACK` (`20` per batch, `8ms` interval), and pastes the translation.
 - **UIPI Detection (`TokenIntegrityLevel = 25`)**:
-  - Implemented `isWindowElevatedOverSelf(hwnd)` via `advapi32.dll` (`OpenProcessToken`, `GetTokenInformation` class `25`, `koffi.decode(buf, 'void*')`, `GetSidSubAuthorityCount`, `GetSidSubAuthority`). Note: `koffi@2.16.4` requires `'void*'` rather than `'intptr_t'` when decoding `TOKEN_MANDATORY_LABEL.Label.Sid`.
-  - Intercepts elevated targets in S1 (`未选中文本或目标窗口为高权限(UIPI)`) and falls back in `pasteTextToWindow` to preserving the translation on the clipboard with a manual `Ctrl+V / Shift+Insert` prompt.
+  - Implemented `isWindowElevatedOverSelf(hwnd)` via `advapi32.dll` (`OpenProcessToken`, `GetTokenInformation` class `25`, `koffi.decode(buf, 'void*')`, `GetSidSubAuthorityCount`, `GetSidSubAuthority`), with conservative `false` fallback when `selfRid === null`. Note: `koffi@2.16.4` requires `'void*'` rather than `'intptr_t'` when decoding `TOKEN_MANDATORY_LABEL.Label.Sid`.
+  - Intercepts elevated targets in S1 (`未选中文本或目标窗口为高权限(UIPI)`) and falls back in `pasteTextToWindow` (and replace paste catch) to preserving the translation on the clipboard with a manual `Ctrl+V / Shift+Insert` prompt.
 - **Modifier & Focus Hygiene**:
   - `MODIFIER_VKS` covers `VK_SHIFT` (`0x10`), `VK_CONTROL` (`0x11`), `VK_MENU` (`0x12`), and L/R/Win keys; `makeKeyEvent` populates `wScan` via `MapVirtualKeyW(wVk, 0)`.
   - `VK_MASK (0xE8)` is injected before `Alt+T` / `Alt+Q` focus switches to suppress stray `WM_SYSKEYUP` menu activation.
   - `pasteTextToWindow` validates `!busy && IsWindow && !IsIconic`, calls `releasePressedModifiers()` and `SetForegroundWindow` **before** hiding the popup, then polls `15ms × 8` to confirm `getActiveTargetHandle() === targetHandle` before pasting (never blind-pasting on failure).
-  - `captureExternalTargetHwnd` filters out own PID and Windows shell/taskbar classes (`Shell_TrayWnd`, `NotifyIconOverflowWindow`, `Progman`, `WorkerW`, etc.).
+  - `isValidExternalTargetWindow` filters out own PID and Windows shell/taskbar classes (`Shell_TrayWnd`, `NotifyIconOverflowWindow`, `Progman`, `WorkerW`, etc.).
 - **Clipboard Sequence & `Win+V` Isolation**:
   - `GetClipboardSequenceNumber()` reuses `snap1` from S7 to S12 when unchanged, extends post-paste wait to `320ms` (`POST_PASTE_RESTORE_DELAY_MS`), verifies the sequence number before restoring, and wraps clipboard ops in 3 short-backoff retries (`20ms`, `40ms`, `80ms`).
   - `writeTransientClipboardText` writes a single `ClipboardItem` containing `ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory`, and `CanUploadToCloudClipboard` (4-byte little-endian `0`) so sentinels and transient replace payloads do not pollute Windows `Win+V` or cloud clipboard history (while user-clicked Copy remains plain `clipboard.writeText`).
@@ -69,8 +65,8 @@ This document records verified runtime observations, architectural deviations fr
   - `session.defaultSession` denies all permission requests/checks; `electron.vite.config.ts` strips dev `localhost` / `ws://localhost:*` from production HTML CSP (`connect-src 'self'`), reinforced by main-process `onHeadersReceived`.
   - `configStore.ts` retries `writeAtomic` `renameSync` on `EPERM` / `EBUSY` / `EACCES` (`15ms`, `35ms`, `70ms`), isolates `addHistory` errors, and encrypts `apiKey` at rest via DPAPI (`safeStorage`).
 - **Launchers & Watchdog (`start-silent.vbs`, `watchdog.vbs`, `autoLaunch.ts`)**:
-  - Both `.vbs` scripts are pure 7-bit ASCII without BOM, verify `electron.exe` and `out\main\index.js`, strip `ELECTRON_RUN_AS_NODE` / `TTL_SMOKE` / `FP_SMOKE`, and pass `"."`.
-  - `watchdog.vbs` uses synchronous `exitCode = shell.Run(..., 0, True)`, exits cleanly on `exitCode = 0` or `clean-exit.flag` / `intentional-quit.flag`, restarts crashes with `2s`–`60s` backoff, and never deletes `SingletonLock`.
+  - Both `.vbs` scripts are pure 7-bit ASCII without BOM, verify `electron.exe` and `out\main\index.js`, strip `ELECTRON_RUN_AS_NODE` / `FP_SMOKE`, and pass `"."`.
+  - `watchdog.vbs` uses synchronous `exitCode = shell.Run(..., 0, True)`, exits cleanly on `exitCode = 0` or `Alt-T\clean-exit.flag`, restarts crashes with `2s`–`60s` backoff, and never deletes `SingletonLock`.
   - `autoLaunch.ts` skips Startup writes when `ELECTRON_RENDERER_URL` is set, supports `PORTABLE_EXECUTABLE_FILE`, and compares existing shortcuts before rewriting.
 
 ---
@@ -79,7 +75,7 @@ This document records verified runtime observations, architectural deviations fr
 
 | Item | Original Concern | Verified Resolution / Status |
 |---|---|---|
-| **U1** | `disable-features=RendererCodeIntegrity` acceptance in Electron 45 | Accepted and verified via `TTL_SMOKE=1` launch on Electron 45.3.3; retained for Windows IME/AV DLL compatibility with compensating sandbox/CSP/Fuses controls (documented in `SECURITY.md`). |
+| **U1** | `disable-features=RendererCodeIntegrity` acceptance in Electron 45 | Accepted and verified via `FP_SMOKE=1` launch on Electron 45.3.3; retained for Windows IME/AV DLL compatibility with compensating sandbox/CSP/Fuses controls (documented in `SECURITY.md`). |
 | **U2** | Embedded Node version inside Electron `45.3.3` | Verified `Node 24.22.3` (`win32 x64`), satisfying `undici@7.30.2` (`>=20.18.1`) and `electron-vite@6.0.0`. |
 | **U3** | Mixed-DPI screenshot window `setBounds` offset | Obsolete (`Alt+W` screenshot capture removed). `popupWindow.ts` applies post-`show` `setBounds` with `programmaticResizeUntil` guard for mixed-DPI stability. |
 | **U4** | `VK_MASK (0xE8)` suppressing stray Alt/Win menu activation | Implemented in `releaseModifiers()`, `injectMaskKey()` (before `Alt+T`/`Alt+Q`), and `sendChordWithModifierGuard()`. |

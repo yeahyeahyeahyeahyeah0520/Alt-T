@@ -56,13 +56,13 @@ export function createLogger(overrides?: Partial<LoggerDeps>): LoggerInstance {
 
   function resolveLogPath(): string | null {
     if (logPathResolved) return logFilePath
-    logPathResolved = true
     try {
       const dir = deps.getLogDir()
       if (!dir) return null
       const resolved = join(dir, LOG_FILE_NAME)
       deps.fs.mkdirSync(dirname(resolved), { recursive: true })
       logFilePath = resolved
+      logPathResolved = true
       return resolved
     } catch {
       logFilePath = null
@@ -105,13 +105,13 @@ export function createLogger(overrides?: Partial<LoggerDeps>): LoggerInstance {
   function logInfo(msg: string): void {
     const safeMsg = scrub(msg)
     appendLogLine('INFO', safeMsg)
-    deps.console.log(`[fp] ${safeMsg}`)
+    deps.console.log(`[alt-t] ${safeMsg}`)
   }
 
   function logWarn(msg: string): void {
     const safeMsg = scrub(msg)
     appendLogLine('WARN', safeMsg)
-    deps.console.warn(`[fp] ${safeMsg}`)
+    deps.console.warn(`[alt-t] ${safeMsg}`)
   }
 
   function logError(msg: string, err?: unknown): void {
@@ -125,9 +125,9 @@ export function createLogger(overrides?: Partial<LoggerDeps>): LoggerInstance {
     const safeErr = rawErr !== '' ? scrub(rawErr) : ''
     appendLogLine('ERROR', `${safeMsg}${safeErr ? ' | ' + safeErr : ''}`)
     if (safeErr !== '') {
-      deps.console.error(`[fp] ${safeMsg}`, safeErr)
+      deps.console.error(`[alt-t] ${safeMsg}`, safeErr)
     } else {
-      deps.console.error(`[fp] ${safeMsg}`)
+      deps.console.error(`[alt-t] ${safeMsg}`)
     }
   }
 
@@ -180,8 +180,4 @@ export function logWarn(msg: string): void {
 
 export function logError(msg: string, err?: unknown): void {
   getActiveLogger().logError(msg, err)
-}
-
-export function getLogFilePath(): string | null {
-  return getActiveLogger().getLogFilePath()
 }

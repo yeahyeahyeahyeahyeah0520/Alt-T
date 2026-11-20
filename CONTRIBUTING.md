@@ -1,6 +1,6 @@
 # Contributing to Alt-T
 
-Thank you for your interest in contributing to **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/alt-t`)!
+Thank you for your interest in contributing to **Alt-T** (`https://github.com/yeahyeahyeahyeahyeah0520/flashprompt`)!
 
 ---
 
@@ -16,8 +16,8 @@ Thank you for your interest in contributing to **Alt-T** (`https://github.com/ye
 ## 2. Local Setup
 
 ```powershell
-git clone https://github.com/yeahyeahyeahyeahyeah0520/alt-t.git
-cd alt-t
+git clone https://github.com/yeahyeahyeahyeahyeah0520/flashprompt.git
+cd flashprompt
 npm install
 ```
 
@@ -32,7 +32,7 @@ Useful development commands:
 ## 3. Running Verification Safely (`FP_SMOKE=1`)
 
 > [!IMPORTANT]
-> Always set `FP_SMOKE=1` (or `TTL_SMOKE=1`) when running `npm run verify` or `npm run smoke` on a machine that may already have a live Alt-T instance running. Smoke mode redirects `userData` to `os.tmpdir()` and skips tray creation, single-instance lock acquisition, and global hotkey registration.
+> Always set `FP_SMOKE=1` when running `npm run verify` or `npm run smoke` on a machine that may already have a live Alt-T instance running. Smoke mode redirects `userData` to `os.tmpdir()` and skips tray creation, single-instance lock acquisition, and global hotkey registration.
 
 ```powershell
 # PowerShell
@@ -63,7 +63,8 @@ Every commit and PR must pass `npm run check`, which enforces:
 | `no-key-log` | `src/**` | Never reference `apiKey` on a `console.*` line |
 | `no-todo` | `src/**`, `tests/**` | No `TODO`, `FIXME`, or `XXX` markers |
 | `no-literal-cjk-range` | `src/**/*.{ts,vue}`, `tests/**` | Use `\u4e00-\u9fff` / `\u200b` / `\ufeff` escapes instead of literal ranges or invisible chars |
-| `platform-guard` | `src/**` outside `src/main/platform/` | Keep `process.platform` branches isolated in `src/main/platform/` |
+| `platform-guard` | `src/**` outside `src/main/platform/` | Keep `process.platform` and `os.platform()` branches isolated in `src/main/platform/` |
+| `platform-no-service-state` | `src/main/platform/**` | Platform layer cannot import `configStore`, `selectionService`, `hotkeyService`, or `translateService` |
 | `popup-close-guard` | `src/main/windows/popupWindow.ts` | `'close'` handler must check `isQuitting()` |
 | `vbs-ascii-no-bom` | `*.vbs` | `.vbs` launchers must be pure 7-bit ASCII without UTF-8/UTF-16 BOM |
 | `no-personal-path` | `src`, `tests`, `scripts`, `.github`, `*.md`, `*.json`, `*.vbs` | Zero local usernames, `C:\Users\<user>\...`, or personal workspace paths |
@@ -84,7 +85,7 @@ Every commit and PR must pass `npm run check`, which enforces:
 
 ## 6. Pull Request Checklist
 
-- [ ] `$env:TTL_SMOKE="1"; npm run verify` passes 100% locally.
+- [ ] `$env:FP_SMOKE="1"; npm run verify` passes 100% locally.
 - [ ] `npm run check` passes with zero rule, `.vbs` ASCII/no-BOM, PII, or secret violations.
 - [ ] New or modified behavior is covered by unit / fault-injection tests in `tests/`.
 - [ ] Documentation (`README.md`, `README.zh-CN.md`, `ARCHITECTURE.md`, `SECURITY.md`, `NOTES.md`) is updated if architecture, hotkeys, or config schema changed.

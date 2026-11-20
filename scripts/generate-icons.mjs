@@ -96,20 +96,19 @@ function sdRoundedBox(px, py, cx, cy, hx, hy, r) {
 }
 
 /**
- * Signed distance to the crisp geometric 'F' glyph in normalized [0, 1] icon coordinates.
+ * Signed distance to the crisp geometric 'T' glyph in normalized [0, 1] icon coordinates.
  */
-function sdFGlyph(u, v) {
-  // Bold geometric 'F' glyph: vertical stem + top horizontal bar + mid horizontal bar
-  const dStem = sdRoundedBox(u, v, 0.35, 0.51, 0.068, 0.25, 0.022)
-  const dTop = sdRoundedBox(u, v, 0.52, 0.31, 0.22, 0.062, 0.022)
-  const dMid = sdRoundedBox(u, v, 0.47, 0.49, 0.17, 0.054, 0.022)
-  return Math.min(dStem, dTop, dMid)
+function sdTGlyph(u, v) {
+  // Bold geometric 'T' glyph: top horizontal bar + centered vertical stem
+  const dTop = sdRoundedBox(u, v, 0.5, 0.32, 0.24, 0.065, 0.022)
+  const dStem = sdRoundedBox(u, v, 0.5, 0.53, 0.072, 0.24, 0.022)
+  return Math.min(dTop, dStem)
 }
 
 /**
  * Render an anti-aliased RGBA icon buffer of `size x size` using 4x4 supersampling.
  */
-function renderAlt-TIcon(size) {
+function renderAltTIcon(size) {
   const rgba = Buffer.alloc(size * size * 4)
   const samples = 4
   const invSamples = 1 / (samples * samples)
@@ -149,15 +148,15 @@ function renderAlt-TIcon(size) {
             b = b * (1 - rim) + 255 * rim
           }
 
-          // Soft drop shadow beneath the 'F' glyph
-          const dShadow = sdFGlyph(u, v - 0.022)
+          // Soft drop shadow beneath the 'T' glyph
+          const dShadow = sdTGlyph(u, v - 0.022)
           const shadowCov = (1 - smoothstep(-0.015, 0.032, dShadow)) * 0.24
           r *= 1 - shadowCov
           g *= 1 - shadowCov
           b *= 1 - shadowCov
 
-          // Crisp white 'F' glyph
-          const dGlyph = sdFGlyph(u, v)
+          // Crisp white 'T' glyph
+          const dGlyph = sdTGlyph(u, v)
           const glyphCov = 1 - smoothstep(-aaWidth, aaWidth, dGlyph)
           r = r * (1 - glyphCov) + 255 * glyphCov
           g = g * (1 - glyphCov) + 255 * glyphCov
@@ -219,12 +218,12 @@ function main() {
 
   const pngBySize = new Map()
   for (const size of ICO_SIZES) {
-    const rgba = renderAlt-TIcon(size)
+    const rgba = renderAltTIcon(size)
     pngBySize.set(size, encodePngRgba(size, size, rgba))
   }
 
   // Generate 512x512 master PNG for build/icon.png
-  const masterPng = encodePngRgba(512, 512, renderAlt-TIcon(512))
+  const masterPng = encodePngRgba(512, 512, renderAltTIcon(512))
   fs.writeFileSync(path.join(BUILD_DIR, 'icon.png'), masterPng)
 
   // Generate explicit helper PNG sizes
