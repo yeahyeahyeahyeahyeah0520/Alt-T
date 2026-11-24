@@ -1,5 +1,6 @@
 import { computed, onUnmounted, ref } from 'vue'
 import type {
+  ProtectedVerifySummary,
   ProviderId,
   TargetLang,
   TranslateChunkPush,
@@ -14,11 +15,15 @@ export interface StartTranslateParams {
   text: string
   to: TargetLang
   stream: boolean
+  targetExeName?: string
+  protectTechnicalText?: boolean
+  promptId?: string
 }
 
 export function useTranslate() {
   const status = ref<TranslateStatus>('idle')
   const translatedText = ref('')
+  const protectedVerify = ref<ProtectedVerifySummary | null>(null)
   const error = ref<TranslateErrorInfo | null>(null)
   const resultProvider = ref<ProviderId | null>(null)
   const usedFallback = ref(false)
@@ -51,6 +56,7 @@ export function useTranslate() {
     currentRequestId = requestId
     status.value = 'loading'
     translatedText.value = ''
+    protectedVerify.value = null
     error.value = null
     resultProvider.value = null
     usedFallback.value = false
@@ -62,7 +68,12 @@ export function useTranslate() {
         requestId,
         text: params.text,
         to: params.to,
-        stream: params.stream
+        stream: params.stream,
+        ...(params.targetExeName ? { targetExeName: params.targetExeName } : {}),
+        ...(typeof params.protectTechnicalText === 'boolean'
+          ? { protectTechnicalText: params.protectTechnicalText }
+          : {}),
+        ...(params.promptId ? { promptId: params.promptId } : {})
       })
       if (currentRequestId !== requestId) return
       if (!reply.accepted) {
@@ -87,6 +98,7 @@ export function useTranslate() {
       cancelPreviousIfBusy()
     }
     currentRequestId = externalRequestId
+    protectedVerify.value = null
     status.value = 'loading'
     translatedText.value = ''
     error.value = null
@@ -111,6 +123,7 @@ export function useTranslate() {
     currentRequestId = null
     status.value = 'idle'
     translatedText.value = ''
+    protectedVerify.value = null
     error.value = null
     resultProvider.value = null
     usedFallback.value = false
@@ -118,9 +131,10 @@ export function useTranslate() {
     clearCopyTimer()
   }
 
-  async function copy(): Promise<void> {
-    if (!translatedText.value) return
-    await window.api.clipboardWrite(translatedText.value)
+  async function copy(overrideText?: string): Promise<void> {
+    const content = overrideText ?? translatedText.value
+    if (!content) return
+    await window.api.clipboardWrite(content)
     copied.value = true
     clearCopyTimer()
     copyTimer = setTimeout(() => {
@@ -140,6 +154,7 @@ export function useTranslate() {
     currentRequestId = null
     status.value = 'done'
     translatedText.value = payload.result.text
+    protectedVerify.value = payload.result.protectedVerify ?? null
     resultProvider.value = payload.result.provider
     usedFallback.value = payload.result.usedFallback
     error.value = null
@@ -163,6 +178,15 @@ export function useTranslate() {
   return {
     status,
     translatedText,
+    protectedVerify,
+    clearResult: () => {
+      cancelPreviousIfBusy()
+      currentRequestId = null
+      status.value = 'idle'
+      translatedText.value = ''
+      protectedVerify.value = null
+      error.value = null
+    },
     error,
     resultProvider,
     usedFallback,

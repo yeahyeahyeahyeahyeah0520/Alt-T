@@ -1,6 +1,10 @@
 import crypto from 'node:crypto'
 import { clipboard, Notification } from 'electron'
-import { createHistoryEntry, shouldLogOriginalTextPreview } from '../../shared/config'
+import {
+  createHistoryEntry,
+  resolveEffectiveAppPolicy,
+  shouldLogOriginalTextPreview
+} from '../../shared/config'
 import { MSG } from '../../shared/messages'
 import {
   countTerminalEraseChars,
@@ -544,15 +548,34 @@ function showS11PopupFallback(
   translatedText: string,
   usedProvider: ProviderId,
   usedFallback: boolean,
-  warnMessage: string
+  warnMessage: string,
+  extra?: {
+    targetContext?: TargetContext
+    targetChanged?: boolean
+    protectedVerificationFailed?: boolean
+    confirmBeforePaste?: boolean
+    level?: NotifyPush['level']
+  }
 ): void {
   const requestId = crypto.randomUUID()
+  lastPopupTargetContext = extra?.targetContext ?? null
   const showFn = activeDeps.showInactiveAtCursor ?? activeDeps.showPopupAtCursor
   showFn({
     mode: 'selection',
     text,
     requestId,
-    to
+    to,
+    directPaste: false,
+    ...(extra?.targetContext?.exeName ? { targetApp: extra.targetContext.exeName } : {}),
+    ...(extra?.targetContext?.ideRegion ? { ideRegion: extra.targetContext.ideRegion } : {}),
+    ...(extra?.targetChanged ? { targetChanged: true } : {}),
+    ...(extra?.confirmBeforePaste ? { confirmBeforePaste: true } : {}),
+    ...(extra?.protectedVerificationFailed
+      ? {
+          protectedVerificationFailed: true,
+          protectedWarningMessage: warnMessage
+        }
+      : {})
   })
   const donePayload: TranslateDonePush = {
     requestId,
@@ -564,7 +587,10 @@ function showS11PopupFallback(
   }
   activeDeps.pushToPopup(IPC_CHANNELS.translateDone, donePayload)
   if (activeDeps.notifyPopup) {
-    activeDeps.notifyPopup({ level: 'warn', message: warnMessage })
+    activeDeps.notifyPopup({
+      level: extra?.level ?? (extra?.protectedVerificationFailed ? 'error' : 'warn'),
+      message: warnMessage
+    })
   } else {
     rt.notifySystem(warnMessage)
   }
@@ -693,13 +719,28 @@ function runShowMode(params: {
   text: string
   to: TargetLang
   targetContext?: TargetContext
+  protectTechnicalText?: boolean
+  promptId?: string
+  confirmBeforePaste?: boolean
   cfg: AppConfig
   rt: SelectionRuntimeDeps
   activeDeps: SelectionServiceDeps
   watchdog: AbortController
   clearWatchdog: () => void
 }): void {
-  const { text, to, targetContext, cfg, rt, activeDeps, watchdog, clearWatchdog } = params
+  const {
+    text,
+    to,
+    targetContext,
+    protectTechnicalText,
+    promptId,
+    confirmBeforePaste,
+    cfg,
+    rt,
+    activeDeps,
+    watchdog,
+    clearWatchdog
+  } = params
   const requestId = crypto.randomUUID()
   lastPopupTargetContext = targetContext ?? null
 
@@ -709,7 +750,8 @@ function runShowMode(params: {
     requestId,
     to,
     ...(targetContext?.exeName ? { targetApp: targetContext.exeName } : {}),
-    ...(targetContext?.ideRegion ? { ideRegion: targetContext.ideRegion } : {})
+    ...(targetContext?.ideRegion ? { ideRegion: targetContext.ideRegion } : {}),
+    ...(confirmBeforePaste ? { confirmBeforePaste: true } : {})
   })
   activeDeps.onTranslationStart?.(requestId)
 
@@ -743,7 +785,7 @@ function runShowMode(params: {
 
     activeDeps.translateService.translateStream(
       requestId,
-      { text, to },
+      { text, to, protectTechnicalText, promptId },
       {
         onChunk: (delta) => {
           if (settled || watchdog.signal.aborted) return
@@ -769,7 +811,7 @@ function runShowMode(params: {
   }
 
   void activeDeps.translateService
-    .translateOnce({ text, to }, watchdog.signal, requestId)
+    .translateOnce({ text, to, protectTechnicalText, promptId }, watchdog.signal, requestId)
     .then((result) => {
       clearWatchdog()
       activeDeps.onTranslationEnd?.(requestId)
@@ -1242,7 +1284,10 @@ export async function runSelectionFlow(
     }
 
     const text = capture.normalizedText
-    const to = detectTargetLang(text)
+    const prePolicy = resolveEffectiveAppPolicy(cfg, capture.targetContext.exeName, {
+      ideRegion: capture.targetContext.ideRegion
+    })
+    const to = prePolicy.targetLang ?? detectTargetLang(text)
     const preview = shouldLogOriginalTextPreview(cfg) ? truncatePreview(text, 40) : ''
     logInfo(
       preview
@@ -1256,6 +1301,9 @@ export async function runSelectionFlow(
         text,
         to,
         targetContext: capture.targetContext,
+        protectTechnicalText: prePolicy.protectTechnicalText,
+        promptId: prePolicy.promptId,
+        confirmBeforePaste: cfg.confirmBeforePaste || prePolicy.forcePopup,
         cfg,
         rt,
         activeDeps: deps,
@@ -1268,11 +1316,23 @@ export async function runSelectionFlow(
     let translatedText: string
     let usedProvider: ProviderId
     let usedFallback: boolean
+    let protectedVerifyOk = true
     try {
-      const res = await deps.translateService.translateOnce({ text, to }, watchdog.signal)
+      const res = await deps.translateService.translateOnce(
+        {
+          text,
+          to,
+          protectTechnicalText: prePolicy.protectTechnicalText,
+          promptId: prePolicy.promptId
+        },
+        watchdog.signal
+      )
       translatedText = res.text
       usedProvider = res.provider
       usedFallback = res.usedFallback
+      if (res.protectedVerify && !res.protectedVerify.ok) {
+        protectedVerifyOk = false
+      }
     } catch (err) {
       if (watchdog.signal.aborted || (err instanceof ProviderError && err.info.code === 'ABORTED')) {
         logInfo('selection replace flow aborted before completion')
@@ -1291,6 +1351,48 @@ export async function runSelectionFlow(
 
     if (watchdog.signal.aborted) {
       logInfo('selection replace flow aborted after translation')
+      return 'done'
+    }
+
+    if (!protectedVerifyOk) {
+      showS11PopupFallback(
+        deps,
+        rt,
+        text,
+        to,
+        translatedText,
+        usedProvider,
+        usedFallback,
+        MSG.PROTECTED_TEXT_VERIFY_FAILED,
+        {
+          targetContext: capture.targetContext,
+          protectedVerificationFailed: true,
+          confirmBeforePaste: true
+        }
+      )
+      return 'done'
+    }
+
+    const postPolicy = resolveEffectiveAppPolicy(cfg, capture.targetContext.exeName, {
+      ideRegion: capture.targetContext.ideRegion,
+      verificationOk: protectedVerifyOk
+    })
+    if (postPolicy.confirmRequired) {
+      showS11PopupFallback(
+        deps,
+        rt,
+        text,
+        to,
+        translatedText,
+        usedProvider,
+        usedFallback,
+        MSG.CONFIRM_BEFORE_PASTE_NOTICE,
+        {
+          targetContext: capture.targetContext,
+          confirmBeforePaste: true,
+          level: 'info'
+        }
+      )
       return 'done'
     }
 

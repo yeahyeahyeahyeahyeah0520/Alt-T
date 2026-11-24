@@ -63,6 +63,11 @@ export const MSG = {
     '严格仅本地模式已拦截 HTTP 重定向，防止文本被转发至外部地址',
   API_KEY_MEMORY_ONLY_WARNING:
     '系统密钥库不可用：API Key 仅保存在当前会话内存中，未向磁盘写入明文',
+  PROTECTED_TEXT_VERIFY_FAILED:
+    '检测到代码、路径或命令等受保护片段占位符异常，已暂停自动填入；请核对下方内容，或点击“填入原文”',
+  CONFIRM_BEFORE_PASTE_NOTICE:
+    '已开启替换前确认：可先微调译文，按 Enter 或点击“填入窗口”确认替换',
+  DIRECT_ORIGINAL_PASTED: '已直接填入原文',
 
   // --- 动态格式消息 ---
   inputTooLong: (maxChars: number): string => `输入文本超过 ${maxChars} 字符上限`,

@@ -1,3 +1,8 @@
+import {
+  protectTechnicalText,
+  restoreAndVerifyProtectedText,
+  type ProtectedTextResult
+} from '../core/protectedText'
 import { shouldLogOriginalTextPreview } from '../../shared/config'
 import { truncatePreview } from '../../shared/text'
 import {
@@ -46,10 +51,25 @@ export function createTranslateService(deps: { getConfig: () => AppConfig }): Tr
   }
   const active = new Map<string, AbortController>()
 
-  function toProviderRequest(req: TranslateRequest): ProviderRequest {
+  function buildVerifySummary(
+    protectedState: ProtectedTextResult,
+    verify: ReturnType<typeof restoreAndVerifyProtectedText>
+  ): NonNullable<TranslateResult['protectedVerify']> | undefined {
+    if (!protectedState.hasProtected) return undefined
     return {
-      text: req.text,
-      to: req.to
+      ok: verify.ok,
+      ...(verify.reason ? { reason: verify.reason } : {}),
+      reordered: verify.reordered,
+      spanCount: protectedState.spans.length,
+      ...(verify.missingTokens.length > 0 ? { missingTokens: [...verify.missingTokens] } : {})
+    }
+  }
+
+  function toProviderRequest(req: TranslateRequest, overrideText?: string): ProviderRequest {
+    return {
+      text: overrideText ?? req.text,
+      to: req.to,
+      ...(req.promptId ? { promptId: req.promptId } : {})
     }
   }
 
@@ -73,6 +93,11 @@ export function createTranslateService(deps: { getConfig: () => AppConfig }): Tr
       active.set(requestId, linked.controller)
     }
 
+    const shouldProtect = req.protectTechnicalText ?? cfg.protectTechnicalText
+    const protectedState = shouldProtect
+      ? protectTechnicalText(req.text)
+      : { hasProtected: false, maskedText: req.text, prefix: 'ALTT', spans: [] }
+
     try {
       const result = await translateWithFallback(
         {
@@ -82,12 +107,25 @@ export function createTranslateService(deps: { getConfig: () => AppConfig }): Tr
           localOnlyMode: cfg.localOnlyMode,
           openaiBaseUrl: cfg.openai.baseUrl
         },
-        toProviderRequest(req),
+        toProviderRequest(req, protectedState.maskedText),
         { stream: false },
         linked.controller.signal
       )
+      const verify = restoreAndVerifyProtectedText(result.text, protectedState, {
+        allowReorder: true
+      })
+      const protectedVerify = buildVerifySummary(protectedState, verify)
+      if (protectedVerify && !protectedVerify.ok) {
+        logWarn(
+          `translateOnce protected text verify failed: reason=${protectedVerify.reason ?? 'unknown'} spans=${protectedVerify.spanCount}`
+        )
+      }
       logInfo(`translateOnce done provider=${result.provider} fallback=${result.usedFallback}`)
-      return result
+      return {
+        ...result,
+        text: verify.text,
+        ...(protectedVerify ? { protectedVerify } : {})
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       logWarn(`translateOnce failed provider=${primary}: ${msg}`)
@@ -122,6 +160,11 @@ export function createTranslateService(deps: { getConfig: () => AppConfig }): Tr
         : `translateStream start id=${requestId} provider=${primary} to=${req.to} chars=${req.text.length}`
     )
 
+    const shouldProtect = req.protectTechnicalText ?? cfg.protectTechnicalText
+    const protectedState = shouldProtect
+      ? protectTechnicalText(req.text)
+      : { hasProtected: false, maskedText: req.text, prefix: 'ALTT', spans: [] }
+
     void translateWithFallback(
       {
         providers,
@@ -130,7 +173,7 @@ export function createTranslateService(deps: { getConfig: () => AppConfig }): Tr
         localOnlyMode: cfg.localOnlyMode,
         openaiBaseUrl: cfg.openai.baseUrl
       },
-      toProviderRequest(req),
+      toProviderRequest(req, protectedState.maskedText),
       {
         stream: true,
         onDelta: (delta: string) => {
@@ -143,10 +186,23 @@ export function createTranslateService(deps: { getConfig: () => AppConfig }): Tr
       .then((res) => {
         if (ac.signal.aborted || active.get(requestId) !== ac) return
         active.delete(requestId)
+        const verify = restoreAndVerifyProtectedText(res.text, protectedState, {
+          allowReorder: true
+        })
+        const protectedVerify = buildVerifySummary(protectedState, verify)
+        if (protectedVerify && !protectedVerify.ok) {
+          logWarn(
+            `translateStream protected text verify failed: reason=${protectedVerify.reason ?? 'unknown'} spans=${protectedVerify.spanCount}`
+          )
+        }
         logInfo(
           `translateStream done id=${requestId} provider=${res.provider} fallback=${res.usedFallback}`
         )
-        sinks.onDone(res)
+        sinks.onDone({
+          ...res,
+          text: verify.text,
+          ...(protectedVerify ? { protectedVerify } : {})
+        })
       })
       .catch((err: unknown) => {
         const isCurrent = active.get(requestId) === ac

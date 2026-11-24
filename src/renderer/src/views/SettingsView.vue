@@ -63,6 +63,23 @@ function handleClearApiKey(): void {
   form.value.openai.apiKey = ''
   clearStoredKey.value = true
 }
+
+function addAppOverrideRow(): void {
+  const current = form.value.appOverrides ?? []
+  form.value.appOverrides = [
+    ...current,
+    {
+      exeName: '',
+      directPaste: true,
+      protectTechnicalText: true
+    }
+  ]
+}
+
+function removeAppOverrideRow(idx: number): void {
+  const current = form.value.appOverrides ?? []
+  form.value.appOverrides = current.filter((_, index) => index !== idx)
+}
 const saving = ref(false)
 const historyExpanded = ref(false)
 
@@ -670,6 +687,71 @@ onUnmounted(() => {
           </select>
         </div>
         <div class="row">
+          <span class="label">技术片段保护</span>
+          <label class="checkbox-label">
+            <input v-model="form.protectTechnicalText" type="checkbox" />
+            翻译前自动保护代码块、路径、URL、CLI 参数与环境变量，校验异常时拦截自动粘贴
+          </label>
+        </div>
+        <div class="row">
+          <span class="label">替换确认</span>
+          <label class="checkbox-label">
+            <input v-model="form.confirmBeforePaste" type="checkbox" />
+            划选替换前一律先弹出可编辑预览确认，不直接自动退格或粘贴
+          </label>
+        </div>
+        <div class="row">
+          <span class="label">分应用覆盖</span>
+          <div class="stack-cell">
+            <div
+              v-for="(item, idx) in form.appOverrides ?? []"
+              :key="idx"
+              class="override-row"
+            >
+              <input
+                v-model="item.exeName"
+                type="text"
+                placeholder="进程名如 code.exe"
+                class="override-exe"
+              />
+              <select v-model="item.defaultTargetLang">
+                <option :value="undefined">语言跟随自动</option>
+                <option value="zh-Hans">{{ TARGET_LANG_NAME['zh-Hans'] }}</option>
+                <option value="en">{{ TARGET_LANG_NAME.en }}</option>
+              </select>
+              <select v-model="item.promptId">
+                <option :value="undefined">模板跟随全局</option>
+                <option v-for="tpl in selectablePrompts" :key="tpl.id" :value="tpl.id">
+                  {{ tpl.name || tpl.id }}
+                </option>
+              </select>
+              <label class="checkbox-label">
+                <input
+                  :checked="item.directPaste !== false"
+                  type="checkbox"
+                  @change="item.directPaste = ($event.target as HTMLInputElement).checked"
+                />
+                允许直填
+              </label>
+              <label class="checkbox-label">
+                <input
+                  :checked="item.protectTechnicalText !== false"
+                  type="checkbox"
+                  @change="item.protectTechnicalText = ($event.target as HTMLInputElement).checked"
+                />
+                片断保护
+              </label>
+              <button type="button" @click="removeAppOverrideRow(idx)">删</button>
+            </div>
+            <div>
+              <button type="button" @click="addAppOverrideRow">+ 添加进程覆盖规则</button>
+            </div>
+            <span class="hint">
+              按目标 exe 覆盖语言/模板/直填策略；仅本地模式、防误触保护、日志隐私与异常拦截等全局安全边界不可被削弱。
+            </span>
+          </div>
+        </div>
+        <div class="row">
           <span class="label">严格本地模式</span>
           <div class="stack-cell">
             <label class="checkbox-label">
@@ -792,6 +874,18 @@ onUnmounted(() => {
   background: rgba(217, 119, 6, 0.12);
   color: #b45309;
   font-size: 13px;
+}
+
+.override-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.override-exe {
+  width: 140px;
 }
 
 .conflict-list {

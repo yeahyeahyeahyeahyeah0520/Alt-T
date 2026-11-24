@@ -9,7 +9,9 @@ import {
   createInitialPopupUiState,
   handlePopupBlurState,
   isStreamEnabledForConfig,
+  markSourceEditedState,
   MAX_MANUAL_INPUT_CHARS,
+  shouldAutoPasteOnDone,
   shouldSuppressMidStreamResize,
   toggleDirectPasteState,
   validateManualInputLength,
@@ -39,6 +41,8 @@ let toastTimer: ReturnType<typeof setTimeout> | null = null
 const {
   status,
   translatedText,
+  protectedVerify,
+  clearResult,
   error,
   resultProvider,
   usedFallback,
@@ -101,6 +105,9 @@ function handleSourceInput(e: Event): void {
     target.value = clamped
     showLocalToast('warn', MSG.inputTruncated(MAX_MANUAL_INPUT_CHARS))
   }
+  uiState.value = markSourceEditedState(uiState.value)
+  editableResult.value = ''
+  clearResult()
 }
 
 function startTranslation(): void {
@@ -110,6 +117,9 @@ function startTranslation(): void {
     showLocalToast('warn', lenCheck.message)
     return
   }
+  uiState.value.sourceEditedSinceTranslate = false
+  uiState.value.protectedVerificationFailed = false
+  uiState.value.protectedWarningMessage = ''
   if (!uiState.value.manualLangLocked) {
     uiState.value.targetLang = detectTargetLang(uiState.value.sourceText)
   }
@@ -119,7 +129,8 @@ function startTranslation(): void {
   void start({
     text: uiState.value.sourceText,
     to: uiState.value.targetLang,
-    stream
+    stream,
+    ...(uiState.value.targetApp ? { targetExeName: uiState.value.targetApp } : {})
   })
 }
 
@@ -143,14 +154,15 @@ async function doPasteToTarget(text: string): Promise<void> {
 }
 
 function handleTranslateAndPaste(): void {
+  const activeResult = editableResult.value || translatedText.value
   const upToDate =
     status.value === 'done' &&
-    translatedText.value !== '' &&
+    activeResult !== '' &&
     uiState.value.lastSubmittedText === uiState.value.sourceText &&
     uiState.value.lastSubmittedLang === uiState.value.targetLang
 
   if (upToDate) {
-    void doPasteToTarget(translatedText.value)
+    void doPasteToTarget(activeResult)
     return
   }
 
@@ -159,7 +171,7 @@ function handleTranslateAndPaste(): void {
     uiState.value.lastSubmittedText === uiState.value.sourceText &&
     uiState.value.lastSubmittedLang === uiState.value.targetLang
   ) {
-    uiState.value.pendingPasteAfterDone = true
+    uiState.value.pendingPasteAfterDone = !uiState.value.confirmBeforePaste
     return
   }
 
@@ -169,9 +181,20 @@ function handleTranslateAndPaste(): void {
       showLocalToast('warn', lenCheck.message)
       return
     }
-    uiState.value.pendingPasteAfterDone = true
+    uiState.value.sourceEditedSinceTranslate = false
+    uiState.value.protectedVerificationFailed = false
+    uiState.value.protectedWarningMessage = ''
+    uiState.value.pendingPasteAfterDone = !uiState.value.confirmBeforePaste
     startTranslation()
   }
+}
+
+async function handlePasteOriginal(): Promise<void> {
+  const original = uiState.value.sourceText
+  if (!original.trim() || uiState.value.pasting) return
+  uiState.value.pendingPasteAfterDone = false
+  cancel()
+  await doPasteToTarget(original)
 }
 
 function handleToggleDirectPaste(): void {
@@ -179,7 +202,8 @@ function handleToggleDirectPaste(): void {
 }
 
 function handleTextareaKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Enter' && !e.isComposing) {
+  if (e.isComposing || sourceComposingJustEnded.value || e.keyCode === 229) return
+  if (e.key === 'Enter') {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
       e.stopPropagation()
@@ -188,7 +212,7 @@ function handleTextareaKeydown(e: KeyboardEvent): void {
     }
     if (!e.shiftKey) {
       e.preventDefault()
-      if (uiState.value.directPasteMode) {
+      if (uiState.value.directPasteMode && !uiState.value.confirmBeforePaste) {
         e.stopPropagation()
         handleTranslateAndPaste()
         return
@@ -196,6 +220,18 @@ function handleTextareaKeydown(e: KeyboardEvent): void {
       uiState.value.pendingPasteAfterDone = false
       startTranslation()
     }
+  }
+}
+
+function handleResultKeydown(e: KeyboardEvent): void {
+  if (e.isComposing || resultComposingJustEnded.value || e.keyCode === 229) return
+  if (e.key === 'Enter' && !e.shiftKey) {
+    if (status.value !== 'done') return
+    const textToPaste = editableResult.value || translatedText.value
+    if (!textToPaste.trim()) return
+    e.preventDefault()
+    e.stopPropagation()
+    void doPasteToTarget(textToPaste)
   }
 }
 
@@ -238,7 +274,7 @@ function handleClose(): void {
 
 async function handleCopy(): Promise<void> {
   try {
-    await copy()
+    await copy(editableResult.value || translatedText.value)
   } catch (err) {
     showLocalToast('error', err instanceof Error ? err.message : String(err))
   }
@@ -312,14 +348,38 @@ function reportHeightIfNeeded(): void {
   })
 }
 
-watch([status, translatedText, error], () => {
-  if (
-    status.value === 'done' &&
-    uiState.value.pendingPasteAfterDone &&
-    translatedText.value !== ''
-  ) {
+const editableResult = ref('')
+const sourceComposingJustEnded = ref(false)
+const resultComposingJustEnded = ref(false)
+
+function handleSourceCompositionEnd(): void {
+  sourceComposingJustEnded.value = true
+  setTimeout(() => {
+    sourceComposingJustEnded.value = false
+  }, 0)
+}
+
+function handleResultCompositionEnd(): void {
+  resultComposingJustEnded.value = true
+  setTimeout(() => {
+    resultComposingJustEnded.value = false
+  }, 0)
+}
+
+watch(translatedText, (nextVal) => {
+  editableResult.value = nextVal
+})
+
+watch([status, translatedText, protectedVerify, error], () => {
+  if (protectedVerify.value && !protectedVerify.value.ok) {
+    uiState.value.protectedVerificationFailed = true
+    uiState.value.protectedWarningMessage = MSG.PROTECTED_TEXT_VERIFY_FAILED
     uiState.value.pendingPasteAfterDone = false
-    void doPasteToTarget(translatedText.value)
+  }
+  const finalResult = editableResult.value || translatedText.value
+  if (status.value === 'done' && shouldAutoPasteOnDone(uiState.value) && finalResult !== '') {
+    uiState.value.pendingPasteAfterDone = false
+    void doPasteToTarget(finalResult)
     return
   }
   if (status.value === 'error' || status.value === 'idle') {
@@ -340,6 +400,7 @@ onMounted(async () => {
 
   unsubPopupShow = window.api.onPopupShow((payload: PopupShowPush) => {
     uiState.value = applyPopupShowState(uiState.value, payload)
+    editableResult.value = payload.initialTranslatedText ?? ''
 
     if (payload.requestId) {
       attachExternal(payload.requestId)
@@ -387,9 +448,28 @@ onUnmounted(() => {
 <template>
   <div class="popup-root">
     <header class="topbar">
-      <span class="title">
-        {{ uiState.directPasteMode ? 'Alt-T · 回车直填' : 'Alt-T' }}
-      </span>
+      <div class="title-wrap">
+        <span class="title">
+          {{ uiState.directPasteMode ? 'Alt-T · 回车直填' : 'Alt-T' }}
+        </span>
+        <span
+          v-if="uiState.targetApp"
+          class="target-badge"
+          :class="{ 'target-warn': uiState.targetChanged }"
+          :title="uiState.targetChanged ? '目标窗口已变化，请确认后再填入' : `当前目标应用：${uiState.targetApp}`"
+        >
+          {{ uiState.targetApp
+          }}{{
+            uiState.ideRegion === 'terminal'
+              ? ' · 终端'
+              : uiState.ideRegion === 'editor'
+                ? ' · 编辑器'
+                : uiState.ideRegion === 'unknown'
+                  ? ' · 区域未明'
+                  : ''
+          }}{{ uiState.targetChanged ? '（已切换）' : '' }}
+        </span>
+      </div>
       <div class="topbar-actions">
         <button
           type="button"
@@ -439,6 +519,8 @@ onUnmounted(() => {
             : `输入文本：Enter 翻译，Ctrl+Enter 翻译并填入终端或原窗口，Shift+Enter 换行（IDE 内置终端推荐 ${directHotkey}）`
         "
         @input="handleSourceInput"
+        @compositionstart="sourceComposingJustEnded = false"
+        @compositionend="handleSourceCompositionEnd"
         @keydown="handleTextareaKeydown"
       />
 
@@ -475,6 +557,15 @@ onUnmounted(() => {
             <button
               type="button"
               class="action-btn"
+              :disabled="!canTranslate || uiState.pasting"
+              title="跳过翻译，直接将左侧/上方原文填入目标窗口"
+              @click="handlePasteOriginal"
+            >
+              填入原文
+            </button>
+            <button
+              type="button"
+              class="action-btn"
               :disabled="!canTranslate"
               title="Enter 仅在浮窗显示译文"
               @click="startTranslation"
@@ -484,7 +575,7 @@ onUnmounted(() => {
             <button
               type="button"
               class="action-btn primary"
-              :disabled="!canTranslate && !translatedText"
+              :disabled="!canTranslate && !editableResult && !translatedText"
               title="快捷键 Ctrl+Enter：翻译后自动切回刚才的终端或窗口并粘贴"
               @click="handleTranslateAndPaste"
             >
@@ -495,10 +586,26 @@ onUnmounted(() => {
       </div>
 
       <section ref="resultPanelRef" class="result-panel">
+        <div
+          v-if="uiState.protectedVerificationFailed || protectedVerify?.ok === false"
+          class="verify-warning"
+        >
+          {{ uiState.protectedWarningMessage || MSG.PROTECTED_TEXT_VERIFY_FAILED }}
+        </div>
         <div v-if="status === 'loading' && !translatedText" class="result-placeholder">
           {{ uiState.pendingPasteAfterDone ? '正在翻译并准备填入原窗口...' : '正在翻译...' }}
         </div>
-        <div v-if="translatedText" class="result-text">{{ translatedText }}</div>
+        <textarea
+          v-if="status === 'done' && (editableResult || translatedText)"
+          v-model="editableResult"
+          class="result-editor"
+          rows="4"
+          placeholder="可微调译文，按 Enter 确认填入原窗口（Shift+Enter 换行）"
+          @compositionstart="resultComposingJustEnded = false"
+          @compositionend="handleResultCompositionEnd"
+          @keydown="handleResultKeydown"
+        />
+        <div v-else-if="translatedText" class="result-text">{{ translatedText }}</div>
         <div v-if="status === 'error' && error" class="result-error">
           <p class="error-message">{{ error.message }}</p>
           <button
@@ -520,7 +627,7 @@ onUnmounted(() => {
             <button
               type="button"
               class="copy-btn"
-              :disabled="!translatedText"
+              :disabled="!editableResult && !translatedText"
               @click="handleCopy"
             >
               {{ copied ? '已复制' : '复制' }}
@@ -697,6 +804,53 @@ onUnmounted(() => {
   word-break: break-word;
   user-select: text;
   line-height: 1.55;
+}
+
+.result-editor {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.verify-warning {
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.target-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.target-badge.target-warn {
+  color: var(--warn);
+  border-color: var(--warn);
 }
 
 .result-placeholder {

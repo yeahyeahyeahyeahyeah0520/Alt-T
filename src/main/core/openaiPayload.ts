@@ -21,9 +21,14 @@ export function renderPrompt(tpl: string, vars: { to: TargetLang; text: string }
   return out
 }
 
-function selectPrompt(cfg: OpenAIProviderConfig): PromptTemplate {
+function selectPrompt(cfg: OpenAIProviderConfig, promptId?: string): PromptTemplate {
   const list = cfg.prompts.length > 0 ? cfg.prompts : DEFAULT_PROMPTS
-  return list.find((p) => p.id === cfg.activePromptId) ?? list[0]
+  const targetId = promptId?.trim() ? promptId.trim() : cfg.activePromptId
+  return (
+    list.find((p) => p.id === targetId) ??
+    list.find((p) => p.id === cfg.activePromptId) ??
+    list[0]
+  )
 }
 
 function buildMessages(prompt: PromptTemplate, req: ProviderRequest): ChatMessage[] {
@@ -42,7 +47,7 @@ export function buildRequestBody(
   req: ProviderRequest,
   stream: boolean
 ): string {
-  const prompt = selectPrompt(cfg)
+  const prompt = selectPrompt(cfg, req.promptId)
   const messages = buildMessages(prompt, req)
   return JSON.stringify({
     model: cfg.model,

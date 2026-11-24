@@ -6,10 +6,12 @@ import {
   type NotifyPush,
   type PopupShowPush
 } from '../../shared/types'
+import { resolveEffectiveAppPolicy } from '../../shared/config'
 import { isQuitting } from '../appState'
 import {
   focusTarget,
   getActiveTargetHandle,
+  getTargetExeName,
   isValidExternalTarget
 } from '../platform/hostPlatform'
 import {
@@ -349,13 +351,17 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
     if (win.isDestroyed()) return
     captureExternalTarget()
     const latest = deps.getConfig()
+    const targetApp = lastTargetHandle > 0 ? getTargetExeName(lastTargetHandle) : ''
+    const policy = resolveEffectiveAppPolicy(latest, targetApp)
     const rect = getPopupRectCentered({ width: latest.popupWidth, height: latest.popupHeight })
     setBoundsProgrammatically(rect)
     pushShow({
       mode: 'input',
       text: '',
-      to: latest.defaultTargetLang,
-      directPaste: false
+      to: policy.targetLang ?? latest.defaultTargetLang,
+      directPaste: false,
+      ...(targetApp ? { targetApp } : {}),
+      ...(latest.confirmBeforePaste ? { confirmBeforePaste: true } : {})
     })
     win.show()
     setBoundsProgrammatically(rect)
@@ -374,13 +380,19 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
       captureExternalTarget()
     }
     const latest = deps.getConfig()
+    const targetApp = lastTargetHandle > 0 ? getTargetExeName(lastTargetHandle) : ''
+    const policy = resolveEffectiveAppPolicy(latest, targetApp, {
+      targetChanged: false
+    })
     const rect = getPopupRectAtCursor({ width: latest.popupWidth, height: latest.popupHeight })
     setBoundsProgrammatically(rect)
     pushShow({
       mode: 'input',
       text: '',
       to: 'en',
-      directPaste: true
+      directPaste: policy.canAutoPaste,
+      ...(targetApp ? { targetApp } : {}),
+      ...(policy.confirmRequired ? { confirmBeforePaste: true } : {})
     })
     win.show()
     setBoundsProgrammatically(rect)

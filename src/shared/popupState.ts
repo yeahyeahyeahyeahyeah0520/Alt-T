@@ -3,6 +3,7 @@ import {
   DEFAULT_CONFIG,
   MAX_TRANSLATE_CHARS,
   type AppConfig,
+  type IdeRegionKind,
   type PopupShowPush,
   type TargetLang
 } from './types'
@@ -19,6 +20,13 @@ export interface PopupUiState {
   lastSubmittedLang: TargetLang
   pendingPasteAfterDone: boolean
   pasting: boolean
+  targetApp: string
+  ideRegion?: IdeRegionKind
+  targetChanged: boolean
+  confirmBeforePaste: boolean
+  protectedVerificationFailed: boolean
+  protectedWarningMessage: string
+  sourceEditedSinceTranslate: boolean
 }
 
 export function createInitialPopupUiState(
@@ -33,14 +41,25 @@ export function createInitialPopupUiState(
     lastSubmittedText: '',
     lastSubmittedLang: defaultTargetLang,
     pendingPasteAfterDone: false,
-    pasting: false
+    pasting: false,
+    targetApp: '',
+    targetChanged: false,
+    confirmBeforePaste: false,
+    protectedVerificationFailed: false,
+    protectedWarningMessage: '',
+    sourceEditedSinceTranslate: false
   }
 }
 
 export function applyPopupShowState(state: PopupUiState, payload: PopupShowPush): PopupUiState {
-  const directPaste = Boolean(payload.directPaste)
+  const blockedFromAutoPaste =
+    Boolean(payload.confirmBeforePaste) ||
+    Boolean(payload.protectedVerificationFailed) ||
+    Boolean(payload.targetChanged) ||
+    payload.ideRegion === 'unknown'
+  const directPaste = blockedFromAutoPaste ? false : Boolean(payload.directPaste)
   const nextTargetLang: TargetLang =
-    payload.mode === 'input' && directPaste ? 'en' : payload.to
+    payload.mode === 'input' && Boolean(payload.directPaste) ? 'en' : payload.to
 
   return {
     ...state,
@@ -51,7 +70,37 @@ export function applyPopupShowState(state: PopupUiState, payload: PopupShowPush)
     hasReceivedPopupShow: true,
     lastSubmittedText: payload.text,
     lastSubmittedLang: nextTargetLang,
-    pendingPasteAfterDone: false
+    pendingPasteAfterDone: false,
+    targetApp: payload.targetApp ?? '',
+    ideRegion: payload.ideRegion,
+    targetChanged: Boolean(payload.targetChanged),
+    confirmBeforePaste: Boolean(payload.confirmBeforePaste),
+    protectedVerificationFailed: Boolean(payload.protectedVerificationFailed),
+    protectedWarningMessage: payload.protectedWarningMessage ?? '',
+    sourceEditedSinceTranslate: false
+  }
+}
+
+export function shouldAutoPasteOnDone(state: PopupUiState): boolean {
+  return (
+    state.pendingPasteAfterDone &&
+    state.directPasteMode &&
+    !state.confirmBeforePaste &&
+    !state.protectedVerificationFailed &&
+    !state.targetChanged &&
+    !state.sourceEditedSinceTranslate &&
+    state.ideRegion !== 'unknown' &&
+    !state.pasting
+  )
+}
+
+export function markSourceEditedState(state: PopupUiState): PopupUiState {
+  return {
+    ...state,
+    pendingPasteAfterDone: false,
+    protectedVerificationFailed: false,
+    protectedWarningMessage: '',
+    sourceEditedSinceTranslate: true
   }
 }
 

@@ -50,6 +50,14 @@ export interface HistoryItem {
   target: TargetLang
 }
 
+export interface AppOverrideConfig {
+  exeName: string
+  defaultTargetLang?: TargetLang
+  promptId?: string
+  directPaste?: boolean
+  protectTechnicalText?: boolean
+}
+
 export interface AppConfig {
   version: 1
   autoLaunch: boolean
@@ -73,6 +81,9 @@ export interface AppConfig {
   customConhostExeNames?: string[]
   /** 划词替换（Alt+R）时强制改用独立输入条（不发 Ctrl+C）的进程名列表（小写，含 .exe），默认 [] */
   forcePopupOnReplaceExes?: string[]
+  protectTechnicalText: boolean
+  confirmBeforePaste: boolean
+  appOverrides?: AppOverrideConfig[]
   history: HistoryItem[]
 }
 
@@ -126,6 +137,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   customWtExeNames: [],
   customConhostExeNames: [],
   forcePopupOnReplaceExes: [],
+  protectTechnicalText: true,
+  confirmBeforePaste: false,
+  appOverrides: [],
   history: []
 }
 
@@ -139,6 +153,8 @@ export interface TranslateRequest {
   text: string
   to: TargetLang
   provider?: ProviderId
+  protectTechnicalText?: boolean
+  promptId?: string
 }
 
 export type TranslateErrorCode =
@@ -159,16 +175,26 @@ export interface TranslateErrorInfo {
   retryable: boolean
 }
 
+export interface ProtectedVerifySummary {
+  ok: boolean
+  reason?: string
+  reordered?: boolean
+  spanCount: number
+  missingTokens?: string[]
+}
+
 export interface TranslateResult {
   text: string
   provider: ProviderId
   usedFallback: boolean
   primaryError?: TranslateErrorInfo
+  protectedVerify?: ProtectedVerifySummary
 }
 
 export interface ProviderRequest {
   text: string
   to: TargetLang
+  promptId?: string
 }
 
 export interface TranslateProvider {
@@ -211,6 +237,10 @@ export interface TranslateStartArgs {
   text: string
   to: TargetLang
   stream: boolean
+  provider?: ProviderId
+  targetExeName?: string
+  protectTechnicalText?: boolean
+  promptId?: string
 }
 
 export interface TranslateStartReply {
@@ -304,6 +334,11 @@ export interface PopupShowPush {
   directPaste?: boolean
   targetApp?: string
   ideRegion?: IdeRegionKind
+  targetChanged?: boolean
+  confirmBeforePaste?: boolean
+  protectedVerificationFailed?: boolean
+  protectedWarningMessage?: string
+  initialTranslatedText?: string
 }
 
 export interface NotifyPush {

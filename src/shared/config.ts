@@ -2,8 +2,10 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_PROMPTS,
   type AppConfig,
+  type AppOverrideConfig,
   type HistoryItem,
   type HotkeyConfig,
+  type IdeRegionKind,
   type OpenAIProviderConfig,
   type PromptTemplate,
   type ProviderId,
@@ -180,18 +182,113 @@ export function mergeProxy(raw: unknown): ProxyConfig {
   }
 }
 
+const SHARED_HOST_EXES = new Set<string>(['applicationframehost.exe'])
+
+export function normalizeExeBasename(raw: string): string {
+  const trimmed = raw.trim().toLowerCase()
+  if (trimmed === '') return ''
+  const slashIdx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return slashIdx >= 0 ? trimmed.slice(slashIdx + 1) : trimmed
+}
+
 function mergeExeNameList(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
   const seen = new Set<string>()
   const out: string[] = []
   for (const item of raw) {
     if (typeof item !== 'string') continue
-    const norm = item.trim().toLowerCase()
+    const norm = normalizeExeBasename(item)
     if (norm.length === 0 || seen.has(norm)) continue
     seen.add(norm)
     out.push(norm)
   }
   return out
+}
+
+export function mergeAppOverrides(raw: unknown): AppOverrideConfig[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const out: AppOverrideConfig[] = []
+  for (const item of raw) {
+    if (!isRecord(item) || typeof item.exeName !== 'string') continue
+    const exeName = normalizeExeBasename(item.exeName)
+    if (exeName.length === 0 || SHARED_HOST_EXES.has(exeName) || seen.has(exeName)) continue
+    seen.add(exeName)
+    const entry: AppOverrideConfig = { exeName }
+    if (isTargetLang(item.defaultTargetLang)) {
+      entry.defaultTargetLang = item.defaultTargetLang
+    }
+    if (typeof item.promptId === 'string' && item.promptId.trim() !== '') {
+      entry.promptId = item.promptId.trim()
+    }
+    if (typeof item.directPaste === 'boolean') {
+      entry.directPaste = item.directPaste
+    }
+    if (typeof item.protectTechnicalText === 'boolean') {
+      entry.protectTechnicalText = item.protectTechnicalText
+    }
+    out.push(entry)
+  }
+  return out
+}
+
+export interface EffectiveAppPolicy {
+  exeName: string
+  targetLang?: TargetLang
+  promptId: string
+  protectTechnicalText: boolean
+  forcePopup: boolean
+  confirmRequired: boolean
+  canAutoPaste: boolean
+  localOnlyMode: boolean
+  logOriginalTextPreview: boolean
+}
+
+export function resolveEffectiveAppPolicy(
+  cfg: AppConfig,
+  exeName: string,
+  runtimeGuards?: {
+    previewEditMode?: boolean
+    targetChanged?: boolean
+    ideRegion?: IdeRegionKind
+    verificationOk?: boolean
+  }
+): EffectiveAppPolicy {
+  const normExe = normalizeExeBasename(exeName)
+  const forceSet = new Set((cfg.forcePopupOnReplaceExes ?? []).map(normalizeExeBasename))
+  const forcePopup = normExe !== '' && forceSet.has(normExe)
+  const override =
+    normExe !== '' && !SHARED_HOST_EXES.has(normExe)
+      ? (cfg.appOverrides ?? []).find((item) => normalizeExeBasename(item.exeName) === normExe)
+      : undefined
+
+  const validPrompt =
+    override?.promptId && cfg.openai.prompts.some((p) => p.id === override.promptId)
+      ? override.promptId
+      : cfg.openai.activePromptId
+
+  const protectTechnicalText = override?.protectTechnicalText ?? cfg.protectTechnicalText
+  const confirmRequired =
+    cfg.confirmBeforePaste ||
+    forcePopup ||
+    Boolean(runtimeGuards?.previewEditMode) ||
+    Boolean(runtimeGuards?.targetChanged) ||
+    runtimeGuards?.ideRegion === 'unknown' ||
+    runtimeGuards?.verificationOk === false ||
+    override?.protectTechnicalText === false ||
+    override?.directPaste === false
+
+  return {
+    exeName: normExe,
+    ...(override?.defaultTargetLang ? { targetLang: override.defaultTargetLang } : {}),
+    promptId: validPrompt,
+    protectTechnicalText,
+    forcePopup,
+    confirmRequired,
+    canAutoPaste: !confirmRequired && (override?.directPaste ?? true),
+    localOnlyMode: cfg.localOnlyMode,
+    logOriginalTextPreview: shouldLogOriginalTextPreview(cfg)
+  }
 }
 
 export function createHistoryEntry(params: {
@@ -504,8 +601,17 @@ export function mergeConfig(raw: unknown): AppConfig {
         ? clamp(Math.round(raw.popupHeight), 200, 4000)
         : DEFAULT_CONFIG.popupHeight,
     customWtExeNames: mergeExeNameList(raw.customWtExeNames),
-    customConhostExeNames: mergeExeNameList(raw.customConhostExeNames),
-    forcePopupOnReplaceExes: mergeExeNameList(raw.forcePopupOnReplaceExes),
-    history: historyEnabled ? mergeHistory(raw.history, historyLimit) : []
+  customConhostExeNames: mergeExeNameList(raw.customConhostExeNames),
+  forcePopupOnReplaceExes: mergeExeNameList(raw.forcePopupOnReplaceExes),
+  protectTechnicalText:
+    typeof raw.protectTechnicalText === 'boolean'
+      ? raw.protectTechnicalText
+      : DEFAULT_CONFIG.protectTechnicalText,
+  confirmBeforePaste:
+    typeof raw.confirmBeforePaste === 'boolean'
+      ? raw.confirmBeforePaste
+      : DEFAULT_CONFIG.confirmBeforePaste,
+  appOverrides: mergeAppOverrides(raw.appOverrides),
+  history: historyEnabled ? mergeHistory(raw.history, historyLimit) : []
   }
 }

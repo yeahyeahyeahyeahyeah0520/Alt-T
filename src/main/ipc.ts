@@ -6,7 +6,14 @@ import {
   type IpcMainInvokeEvent,
   type WebContents
 } from 'electron'
-import { createHistoryEntry, HOTKEY_KEYS, isRecord, isTargetLang } from '../shared/config'
+import {
+  createHistoryEntry,
+  HOTKEY_KEYS,
+  isRecord,
+  isTargetLang,
+  resolveEffectiveAppPolicy
+} from '../shared/config'
+import { getTargetExeName } from './platform/hostPlatform'
 import { MSG } from '../shared/messages'
 import {
   IPC_CHANNELS,
@@ -105,7 +112,14 @@ function validateTranslateStartArgs(raw: unknown): TranslateStartArgs {
     requestId: raw.requestId,
     text: raw.text,
     to: raw.to,
-    stream: raw.stream
+    stream: raw.stream,
+    ...(typeof raw.targetExeName === 'string' ? { targetExeName: raw.targetExeName } : {}),
+    ...(typeof raw.protectTechnicalText === 'boolean'
+      ? { protectTechnicalText: raw.protectTechnicalText }
+      : {}),
+    ...(typeof raw.promptId === 'string' && raw.promptId.trim() !== ''
+      ? { promptId: raw.promptId.trim() }
+      : {})
   }
 }
 
@@ -312,7 +326,17 @@ export function registerIpc(deps: IpcDeps): void {
       return { accepted: false }
     }
 
-    const { requestId, text, to, stream } = args
+    const { requestId, text, to, stream, targetExeName, protectTechnicalText, promptId } = args
+    const cfg = deps.configStore.get()
+    const resolvedExe =
+      targetExeName ??
+      (deps.popupWindow.getLastTargetHandle() > 0
+        ? getTargetExeName(deps.popupWindow.getLastTargetHandle())
+        : '')
+    const policy = resolveEffectiveAppPolicy(cfg, resolvedExe)
+    const effectiveProtect =
+      typeof protectTechnicalText === 'boolean' ? protectTechnicalText : policy.protectTechnicalText
+    const effectivePromptId = promptId ?? policy.promptId
     const sender = event.sender
 
     if (text.length > MAX_TRANSLATE_CHARS) {
@@ -338,7 +362,7 @@ export function registerIpc(deps: IpcDeps): void {
     if (stream) {
       deps.translateService.translateStream(
         requestId,
-        { text, to },
+        { text, to, protectTechnicalText: effectiveProtect, promptId: effectivePromptId },
         {
           onChunk: (delta) => {
             if (cancelledIds.has(requestId)) return
@@ -364,7 +388,11 @@ export function registerIpc(deps: IpcDeps): void {
     }
 
     void deps.translateService
-      .translateOnce({ text, to }, undefined, requestId)
+      .translateOnce(
+        { text, to, protectTechnicalText: effectiveProtect, promptId: effectivePromptId },
+        undefined,
+        requestId
+      )
       .then((result) => {
         deps.popupWindow.endTranslation(requestId)
         if (cancelledIds.has(requestId)) return
