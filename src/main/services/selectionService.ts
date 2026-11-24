@@ -14,7 +14,10 @@ import {
   ProviderError,
   type AppConfig,
   type HistoryItem,
+  type IdeRegionKind,
   type NotifyPush,
+  type PopupPasteStatus,
+  type UiaProbeReason,
   type PopupPasteReply,
   type PopupShowPush,
   type ProviderId,
@@ -41,10 +44,14 @@ import {
   focusTarget,
   getActiveTargetHandle,
   getClipboardSequenceNumber,
+  getTargetClassName,
   getTargetCopyKind,
   getTargetExeName,
   getTargetPasteKind,
+  getTargetPid,
+  getTargetWindowClassification,
   getWindowTitle,
+  type WindowClassification,
   isOwnProcessWindow,
   isTargetAlive,
   isTargetMinimized,
@@ -83,7 +90,13 @@ export interface SelectionRuntimeDeps {
     getClipboardSequenceNumber: () => number
     getTargetCopyKind: (handle: number, customSets?: CustomTerminalExeSets) => WindowInputKind
     getTargetExeName?: (handle: number) => string
+    getTargetClassName?: (handle: number) => string
+    getTargetPid?: (handle: number) => number
     getTargetPasteKind: (handle: number, customSets?: CustomTerminalExeSets) => WindowInputKind
+    getTargetWindowClassification?: (
+      handle: number,
+      customSets?: CustomTerminalExeSets
+    ) => Promise<WindowClassification>
     getWindowTitle: (handle: number) => string
     isOwnProcessWindow: (handle: number) => boolean
     isTargetAlive: (handle: number) => boolean
@@ -105,6 +118,7 @@ export interface SelectionServiceDeps {
   translateService: TranslateService
   showPopupAtCursor: (payload: PopupShowPush) => void
   showInactiveAtCursor?: (payload: PopupShowPush) => void
+  reshowPopupInactive?: () => void
   openDirectInput?: (targetHandle: number) => void
   pushToPopup: (channel: string, payload: unknown) => void
   onTranslationStart?: (requestId: string) => void
@@ -156,9 +170,12 @@ function getRuntime(): SelectionRuntimeDeps {
       focusTarget,
       getActiveTargetHandle,
       getClipboardSequenceNumber,
+      getTargetClassName,
       getTargetCopyKind,
       getTargetExeName,
       getTargetPasteKind,
+      getTargetPid,
+      getTargetWindowClassification,
       getWindowTitle,
       isOwnProcessWindow,
       isTargetAlive,
@@ -234,26 +251,128 @@ function recordHistory(
   }
 }
 
+export interface TargetContext {
+  handle: number
+  pid: number
+  exeName: string
+  className: string
+  title: string
+  inputKind: WindowInputKind
+  ideRegion?: IdeRegionKind
+  uiaReason?: UiaProbeReason
+}
+
+export type TargetVerifyFailureReason =
+  | 'target-closed'
+  | 'target-minimized'
+  | 'uipi-elevated'
+  | 'target-foreground-lost'
+  | 'target-changed'
+  | 'target-tab-changed'
+
+export type TargetVerifyResult =
+  | { ok: true }
+  | { ok: false; reason: TargetVerifyFailureReason }
+
+let lastPopupTargetContext: TargetContext | null = null
+
+export function captureTargetSnapshot(
+  rt: SelectionRuntimeDeps,
+  handle: number,
+  classification?: WindowClassification
+): TargetContext {
+  const pid = rt.host.getTargetPid?.(handle) ?? 0
+  const exeName = (rt.host.getTargetExeName?.(handle) ?? '').trim().toLowerCase()
+  const className = (rt.host.getTargetClassName?.(handle) ?? '').trim().toLowerCase()
+  const customSets = buildCustomExeSets(rt.configStore.get())
+  const inputKind = classification?.inputKind ?? rt.host.getTargetPasteKind(handle, customSets)
+  const title = inputKind === 'wt' || inputKind === 'conhost' ? rt.host.getWindowTitle(handle) : ''
+  return {
+    handle,
+    pid,
+    exeName,
+    className,
+    title,
+    inputKind,
+    ...(classification?.ideRegion !== undefined ? { ideRegion: classification.ideRegion } : {}),
+    ...(classification?.uiaReason !== undefined ? { uiaReason: classification.uiaReason } : {})
+  }
+}
+
+export function verifyTargetContext(
+  rt: SelectionRuntimeDeps,
+  ctx: TargetContext
+): TargetVerifyResult {
+  if (!ctx.handle || !rt.host.isTargetAlive(ctx.handle)) {
+    return { ok: false, reason: 'target-closed' }
+  }
+  if (rt.host.isTargetMinimized(ctx.handle)) {
+    return { ok: false, reason: 'target-minimized' }
+  }
+  if (rt.host.isWindowElevatedOverSelf(ctx.handle)) {
+    return { ok: false, reason: 'uipi-elevated' }
+  }
+  if (rt.host.getActiveTargetHandle() !== ctx.handle) {
+    return { ok: false, reason: 'target-foreground-lost' }
+  }
+  const pidNow = rt.host.getTargetPid?.(ctx.handle) ?? 0
+  if (ctx.pid > 0 && pidNow > 0 && pidNow !== ctx.pid) {
+    return { ok: false, reason: 'target-changed' }
+  }
+  const exeNow = (rt.host.getTargetExeName?.(ctx.handle) ?? '').trim().toLowerCase()
+  if (ctx.exeName && exeNow && exeNow !== ctx.exeName) {
+    return { ok: false, reason: 'target-changed' }
+  }
+  const classNow = (rt.host.getTargetClassName?.(ctx.handle) ?? '').trim().toLowerCase()
+  if (ctx.className && classNow && classNow !== ctx.className) {
+    return { ok: false, reason: 'target-changed' }
+  }
+  if ((ctx.inputKind === 'wt' || ctx.inputKind === 'conhost') && ctx.title) {
+    const titleNow = rt.host.getWindowTitle(ctx.handle)
+    if (titleNow !== ctx.title) {
+      return { ok: false, reason: 'target-tab-changed' }
+    }
+  }
+  return { ok: true }
+}
+
+function mapVerifyFailureMessage(reason: TargetVerifyFailureReason): string {
+  switch (reason) {
+    case 'target-closed':
+      return MSG.TARGET_CLOSED
+    case 'target-minimized':
+      return MSG.TARGET_MINIMIZED
+    case 'uipi-elevated':
+      return MSG.UIPI_PASTE_FALLBACK
+    case 'target-tab-changed':
+      return MSG.TARGET_CHANGED_TAB
+    case 'target-foreground-lost':
+      return MSG.TARGET_FOREGROUND_LOST
+    case 'target-changed':
+      return MSG.PASTE_CANCELLED_TARGET_CHANGED
+  }
+}
+
 function validatePastePreconditions(
   rt: SelectionRuntimeDeps,
   targetHandle: number,
   textToPaste: string
 ): PopupPasteReply | null {
   if (busy) {
-    return { ok: false, message: MSG.BUSY_LOCKED }
+    return { ok: false, status: 'error', reason: 'busy', message: MSG.BUSY_LOCKED }
   }
   if (textToPaste.trim() === '') {
-    return { ok: false, message: MSG.TRANSLATION_EMPTY }
+    return { ok: false, status: 'error', reason: 'empty-text', message: MSG.TRANSLATION_EMPTY }
   }
   if (!rt.host.canInjectKeystrokes()) {
     // Graceful clipboard-only mode (e.g. Linux Wayland)
     return null
   }
   if (!targetHandle || !rt.host.isTargetAlive(targetHandle)) {
-    return { ok: false, message: MSG.TARGET_CLOSED }
+    return { ok: false, status: 'error', reason: 'target-closed', message: MSG.TARGET_CLOSED }
   }
   if (rt.host.isTargetMinimized(targetHandle)) {
-    return { ok: false, message: MSG.TARGET_MINIMIZED }
+    return { ok: false, status: 'error', reason: 'target-minimized', message: MSG.TARGET_MINIMIZED }
   }
   return null
 }
@@ -282,7 +401,12 @@ export async function pasteTextToWindow(
       await rt.clipboard.writeText(textToPaste)
       hidePopup?.()
       rt.notifySystem(MSG.CLIPBOARD_ONLY_MODE)
-      return { ok: true }
+      return {
+        ok: false,
+        status: 'clipboard-only',
+        reason: 'platform-no-inject',
+        message: MSG.CLIPBOARD_ONLY_MODE
+      }
     }
 
     if (rt.host.isWindowElevatedOverSelf(targetHandle)) {
@@ -291,16 +415,50 @@ export async function pasteTextToWindow(
       hidePopup?.()
       logWarn(`pasteTextToWindow UIPI fallback for handle=${targetHandle}`)
       rt.notifySystem(MSG.UIPI_PASTE_FALLBACK)
-      return { ok: true }
+      return {
+        ok: false,
+        status: 'clipboard-only',
+        reason: 'uipi-elevated',
+        message: MSG.UIPI_PASTE_FALLBACK
+      }
     }
+
+    const trackedCtx =
+      lastPopupTargetContext && lastPopupTargetContext.handle === targetHandle
+        ? lastPopupTargetContext
+        : captureTargetSnapshot(rt, targetHandle)
+
+    // Pre-check identity mismatch before hiding popup if snapshot already drifted
+    if (
+      lastPopupTargetContext &&
+      lastPopupTargetContext.handle === targetHandle &&
+      trackedCtx === lastPopupTargetContext
+    ) {
+      const currentPid = rt.host.getTargetPid?.(targetHandle) ?? 0
+      const currentExe = (rt.host.getTargetExeName?.(targetHandle) ?? '').trim().toLowerCase()
+      const currentClass = (rt.host.getTargetClassName?.(targetHandle) ?? '').trim().toLowerCase()
+      if (
+        (trackedCtx.pid > 0 && currentPid > 0 && currentPid !== trackedCtx.pid) ||
+        (trackedCtx.exeName && currentExe && currentExe !== trackedCtx.exeName) ||
+        (trackedCtx.className && currentClass && currentClass !== trackedCtx.className)
+      ) {
+        return {
+          ok: false,
+          status: 'cancelled',
+          reason: 'target-changed',
+          message: MSG.PASTE_CANCELLED_TARGET_CHANGED
+        }
+      }
+    }
+
+    // Hide popup before focus transfer so Windows grants foreground cleanly
+    hidePopup?.()
 
     await rt.host.releasePressedModifiers()
 
     if (rt.host.getActiveTargetHandle() !== targetHandle) {
       rt.host.focusTarget(targetHandle)
     }
-
-    hidePopup?.()
 
     let confirmed = rt.host.getActiveTargetHandle() === targetHandle
     for (let attempt = 0; !confirmed && attempt < FOREGROUND_POLL_ATTEMPTS; attempt++) {
@@ -309,38 +467,70 @@ export async function pasteTextToWindow(
     }
 
     if (!confirmed) {
-      await rt.clipboard.writeText(textToPaste)
       const currentActive = rt.host.getActiveTargetHandle()
       logWarn(`pasteTextToWindow foreground mismatch: expected=${targetHandle}, actual=${currentActive}`)
+      deps?.reshowPopupInactive?.()
       rt.notifySystem(MSG.TARGET_FOREGROUND_LOST)
-      return { ok: false, message: MSG.TARGET_FOREGROUND_LOST }
+      return {
+        ok: false,
+        status: 'cancelled',
+        reason: 'target-foreground-lost',
+        message: MSG.TARGET_FOREGROUND_LOST
+      }
     }
 
     await rt.sleep(30)
 
     const customSets = buildCustomExeSets(rt.configStore.get())
-    const pasteKind = rt.host.getTargetPasteKind(targetHandle, customSets)
+    const pasteKind =
+      trackedCtx.ideRegion === 'terminal'
+        ? 'wt'
+        : rt.host.getTargetPasteKind(targetHandle, customSets)
     const snap = await rt.clipboardBackup.backupClipboard()
     await rt.clipboardBackup.writeTransientClipboardText(textToPaste)
     const seqAfterWrite = rt.host.getClipboardSequenceNumber()
+
+    const preSendCheck = verifyTargetContext(rt, trackedCtx)
+    if (!preSendCheck.ok) {
+      await rt.clipboardBackup.restoreClipboardIfUnchanged(snap, textToPaste, seqAfterWrite)
+      deps?.reshowPopupInactive?.()
+      const cancelMessage = mapVerifyFailureMessage(preSendCheck.reason)
+      logWarn(`pasteTextToWindow cancelled before paste: ${preSendCheck.reason}`)
+      rt.notifySystem(cancelMessage)
+      return {
+        ok: false,
+        status: 'cancelled',
+        reason: preSendCheck.reason,
+        message: cancelMessage
+      }
+    }
 
     try {
       rt.host.dispatchPasteShortcut(pasteKind)
     } catch (err) {
       await rt.clipboard.writeText(textToPaste)
+      const errMsg = err instanceof Error ? err.message : String(err)
       const msg = getPasteErrorMessage(err)
       logError('pasteTextToWindow dispatchPaste failed', err)
       rt.notifySystem(msg)
-      return { ok: true }
+      return {
+        ok: false,
+        status: 'clipboard-only',
+        reason:
+          errMsg === 'MACOS_ACCESSIBILITY_DENIED'
+            ? 'macos-accessibility-denied'
+            : 'paste-shortcut-failed',
+        message: msg
+      }
     }
 
     await rt.sleep(POST_PASTE_RESTORE_DELAY_MS)
     await rt.clipboardBackup.restoreClipboardIfUnchanged(snap, textToPaste, seqAfterWrite)
-    return { ok: true }
+    return { ok: true, status: 'pasted' }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     logError('pasteTextToWindow unexpected error', err)
-    return { ok: false, message: msg }
+    return { ok: false, status: 'error', reason: 'unexpected-error', message: msg }
   } finally {
     busy = false
   }
@@ -390,17 +580,20 @@ type CaptureResult =
       titleAtStart: string
       snap: ClipboardSnapshot
       seqAfterRestore: number
+      targetContext: TargetContext
     }
   | {
       ok: false
       reason:
         | 'own-window'
         | 'uipi'
+        | 'ide-region-unknown'
         | 'copy-failed'
         | 'macos-accessibility-denied'
         | 'no-selection'
         | 'non-text'
         | 'too-long'
+      targetContext?: TargetContext
     }
 
 async function captureSelectionText(
@@ -417,8 +610,18 @@ async function captureSelectionText(
   }
 
   const customSets = buildCustomExeSets(cfg)
-  const copyKind = rt.host.getTargetCopyKind(handle, customSets)
-  const pasteKind = rt.host.getTargetPasteKind(handle, customSets)
+  const classification = rt.host.getTargetWindowClassification
+    ? await rt.host.getTargetWindowClassification(handle, customSets)
+    : undefined
+  if (classification?.ideRegion === 'unknown') {
+    return {
+      ok: false,
+      reason: 'ide-region-unknown',
+      targetContext: captureTargetSnapshot(rt, handle, classification)
+    }
+  }
+  const copyKind = classification?.inputKind ?? rt.host.getTargetCopyKind(handle, customSets)
+  const pasteKind = classification?.inputKind ?? rt.host.getTargetPasteKind(handle, customSets)
   const titleAtStart = pasteKind === 'wt' ? rt.host.getWindowTitle(handle) : ''
 
   await rt.host.releasePressedModifiers()
@@ -477,27 +680,36 @@ async function captureSelectionText(
     pasteKind,
     titleAtStart,
     snap,
-    seqAfterRestore
+    seqAfterRestore,
+    targetContext: captureTargetSnapshot(
+      rt,
+      handle,
+      classification ?? { inputKind: pasteKind }
+    )
   }
 }
 
 function runShowMode(params: {
   text: string
   to: TargetLang
+  targetContext?: TargetContext
   cfg: AppConfig
   rt: SelectionRuntimeDeps
   activeDeps: SelectionServiceDeps
   watchdog: AbortController
   clearWatchdog: () => void
 }): void {
-  const { text, to, cfg, rt, activeDeps, watchdog, clearWatchdog } = params
+  const { text, to, targetContext, cfg, rt, activeDeps, watchdog, clearWatchdog } = params
   const requestId = crypto.randomUUID()
+  lastPopupTargetContext = targetContext ?? null
 
   activeDeps.showPopupAtCursor({
     mode: 'selection',
     text,
     requestId,
-    to
+    to,
+    ...(targetContext?.exeName ? { targetApp: targetContext.exeName } : {}),
+    ...(targetContext?.ideRegion ? { ideRegion: targetContext.ideRegion } : {})
   })
   activeDeps.onTranslationStart?.(requestId)
 
@@ -593,6 +805,7 @@ async function pasteReplacementAndRecord(params: {
   translatedText: string
   sourceText: string
   pasteKind: WindowInputKind
+  targetContext?: TargetContext
   snap: ClipboardSnapshot
   seqAfterRestore: number
   rt: SelectionRuntimeDeps
@@ -606,6 +819,7 @@ async function pasteReplacementAndRecord(params: {
     translatedText,
     sourceText,
     pasteKind,
+    targetContext,
     snap,
     seqAfterRestore,
     rt,
@@ -625,6 +839,26 @@ async function pasteReplacementAndRecord(params: {
   await rt.clipboardBackup.writeTransientClipboardText(translatedText)
   const seqAfterWrite = rt.host.getClipboardSequenceNumber()
 
+  if (targetContext) {
+    const preSendCheck = verifyTargetContext(rt, targetContext)
+    if (!preSendCheck.ok) {
+      await rt.clipboardBackup.restoreClipboardIfUnchanged(snap2, translatedText, seqAfterWrite)
+      const cancelMsg = mapVerifyFailureMessage(preSendCheck.reason)
+      logWarn(`pasteReplacementAndRecord cancelled before paste: ${preSendCheck.reason}`)
+      showS11PopupFallback(
+        activeDeps,
+        rt,
+        sourceText,
+        to,
+        translatedText,
+        usedProvider,
+        usedFallback,
+        cancelMsg
+      )
+      return 'error'
+    }
+  }
+
   try {
     rt.host.dispatchPasteShortcut(pasteKind)
   } catch (err) {
@@ -641,6 +875,9 @@ async function pasteReplacementAndRecord(params: {
   return 'done'
 }
 
+const TERMINAL_BACKSPACE_BATCH_CHARS = 20
+const TERMINAL_BACKSPACE_BATCH_INTERVAL_MS = 8
+
 async function runReplaceModeTerminal(params: {
   translatedText: string
   rawText: string
@@ -648,6 +885,7 @@ async function runReplaceModeTerminal(params: {
   pasteKind: WindowInputKind
   handle: number
   titleAtStart: string
+  targetContext: TargetContext
   snap: ClipboardSnapshot
   seqAfterRestore: number
   rt: SelectionRuntimeDeps
@@ -664,6 +902,7 @@ async function runReplaceModeTerminal(params: {
     pasteKind,
     handle,
     titleAtStart,
+    targetContext,
     snap,
     seqAfterRestore,
     rt,
@@ -678,12 +917,15 @@ async function runReplaceModeTerminal(params: {
 
   if (!cfg.terminalAutoBackspace || eraseCount === 0) {
     const requestId = crypto.randomUUID()
+    lastPopupTargetContext = targetContext
     activeDeps.showPopupAtCursor({
       mode: 'selection',
       text: normalizedText,
       requestId,
       to,
-      directPaste: true
+      directPaste: true,
+      ...(targetContext.exeName ? { targetApp: targetContext.exeName } : {}),
+      ...(targetContext.ideRegion ? { ideRegion: targetContext.ideRegion } : {})
     })
     const donePayload: TranslateDonePush = {
       requestId,
@@ -702,12 +944,15 @@ async function runReplaceModeTerminal(params: {
     return 'done'
   }
 
-  const handleNow = rt.host.getActiveTargetHandle()
+  const effectiveCtx: TargetContext =
+    titleAtStart && !targetContext.title ? { ...targetContext, title: titleAtStart } : targetContext
+
   const titleNow = pasteKind === 'wt' ? rt.host.getWindowTitle(handle) : ''
   const titleChanged =
     pasteKind === 'wt' && titleAtStart !== '' && titleNow !== '' && titleNow !== titleAtStart
 
-  if (handleNow !== handle || titleChanged) {
+  const preCheck = verifyTargetContext(rt, effectiveCtx)
+  if (!preCheck.ok || titleChanged) {
     showS11PopupFallback(
       activeDeps,
       rt,
@@ -716,33 +961,116 @@ async function runReplaceModeTerminal(params: {
       translatedText,
       usedProvider,
       usedFallback,
-      MSG.TARGET_CHANGED_TAB
+      titleChanged || (!preCheck.ok && preCheck.reason === 'target-tab-changed')
+        ? MSG.TARGET_CHANGED_TAB
+        : mapVerifyFailureMessage(preCheck.ok ? 'target-changed' : preCheck.reason)
     )
     return 'done'
   }
 
   await rt.host.releasePressedModifiers()
-  await rt.host.dispatchBackspaces(eraseCount)
+
+  // Prepare clipboard before destructive backspaces so partial-delete aborts never lose the translation
+  const curSeq = rt.host.getClipboardSequenceNumber()
+  const snap2 =
+    seqAfterRestore > 0 && curSeq === seqAfterRestore
+      ? snap
+      : await rt.clipboardBackup.backupClipboard()
+  await rt.clipboardBackup.writeTransientClipboardText(translatedText)
+  const seqAfterWrite = rt.host.getClipboardSequenceNumber()
+
+  let remaining = eraseCount
+  let batchesSent = 0
+  while (remaining > 0) {
+    const batchVerify = verifyTargetContext(rt, effectiveCtx)
+    if (!batchVerify.ok) {
+      if (batchesSent > 0) {
+        await rt.clipboard.writeText(translatedText)
+        showS11PopupFallback(
+          activeDeps,
+          rt,
+          normalizedText,
+          to,
+          translatedText,
+          usedProvider,
+          usedFallback,
+          MSG.TARGET_CHANGED_AFTER_PARTIAL_DELETE
+        )
+      } else {
+        await rt.clipboardBackup.restoreClipboardIfUnchanged(snap2, translatedText, seqAfterWrite)
+        showS11PopupFallback(
+          activeDeps,
+          rt,
+          normalizedText,
+          to,
+          translatedText,
+          usedProvider,
+          usedFallback,
+          mapVerifyFailureMessage(batchVerify.reason)
+        )
+      }
+      return 'error'
+    }
+    const chunk = Math.min(TERMINAL_BACKSPACE_BATCH_CHARS, remaining)
+    await rt.host.dispatchBackspaces(chunk)
+    batchesSent += 1
+    remaining -= chunk
+    if (remaining > 0) {
+      await rt.sleep(TERMINAL_BACKSPACE_BATCH_INTERVAL_MS)
+    }
+  }
+
   await rt.sleep(20)
 
-  return pasteReplacementAndRecord({
-    translatedText,
-    sourceText: normalizedText,
-    pasteKind,
-    snap,
-    seqAfterRestore,
-    rt,
-    activeDeps,
-    to,
-    usedProvider,
-    usedFallback,
-    logContext: 'dispatchPasteShortcut failed (terminal auto-backspace)'
-  })
+  const preSendCheck = verifyTargetContext(rt, effectiveCtx)
+  if (!preSendCheck.ok) {
+    if (batchesSent > 0) {
+      await rt.clipboard.writeText(translatedText)
+      showS11PopupFallback(
+        activeDeps,
+        rt,
+        normalizedText,
+        to,
+        translatedText,
+        usedProvider,
+        usedFallback,
+        MSG.TARGET_CHANGED_AFTER_PARTIAL_DELETE
+      )
+    } else {
+      await rt.clipboardBackup.restoreClipboardIfUnchanged(snap2, translatedText, seqAfterWrite)
+      showS11PopupFallback(
+        activeDeps,
+        rt,
+        normalizedText,
+        to,
+        translatedText,
+        usedProvider,
+        usedFallback,
+        mapVerifyFailureMessage(preSendCheck.reason)
+      )
+    }
+    return 'error'
+  }
+
+  try {
+    rt.host.dispatchPasteShortcut(pasteKind)
+  } catch (err) {
+    await rt.clipboard.writeText(translatedText)
+    rt.notifySystem(getPasteErrorMessage(err))
+    logError('dispatchPasteShortcut failed (terminal auto-backspace)', err)
+    return 'error'
+  }
+
+  await rt.sleep(POST_PASTE_RESTORE_DELAY_MS)
+  await rt.clipboardBackup.restoreClipboardIfUnchanged(snap2, translatedText, seqAfterWrite)
+  recordHistory(rt, activeDeps, normalizedText, translatedText, usedProvider, to)
+  return 'done'
 }
 
 async function runReplaceModeNormal(params: {
   translatedText: string
   handle: number
+  targetContext: TargetContext
   snap: ClipboardSnapshot
   seqAfterRestore: number
   pasteKind: WindowInputKind
@@ -755,7 +1083,7 @@ async function runReplaceModeNormal(params: {
 }): Promise<'done' | 'error'> {
   const {
     translatedText,
-    handle,
+    targetContext,
     snap,
     seqAfterRestore,
     pasteKind,
@@ -767,8 +1095,8 @@ async function runReplaceModeNormal(params: {
     usedFallback
   } = params
 
-  const handleNow = rt.host.getActiveTargetHandle()
-  if (handleNow !== handle) {
+  const preCheck = verifyTargetContext(rt, targetContext)
+  if (!preCheck.ok) {
     showS11PopupFallback(
       activeDeps,
       rt,
@@ -777,7 +1105,9 @@ async function runReplaceModeNormal(params: {
       translatedText,
       usedProvider,
       usedFallback,
-      MSG.TARGET_CHANGED
+      preCheck.reason === 'target-foreground-lost'
+        ? MSG.TARGET_CHANGED
+        : mapVerifyFailureMessage(preCheck.reason)
     )
     return 'done'
   }
@@ -788,6 +1118,7 @@ async function runReplaceModeNormal(params: {
     translatedText,
     sourceText: text,
     pasteKind,
+    targetContext,
     snap,
     seqAfterRestore,
     rt,
@@ -867,6 +1198,18 @@ export async function runSelectionFlow(
         case 'own-window':
           logInfo(`selection flow ignored on own process window handle=${handle0}`)
           return 'no-selection'
+        case 'ide-region-unknown':
+          if (mode === 'replace' && deps?.openDirectInput) {
+            deps.openDirectInput(handle0)
+            if (deps.notifyPopup) {
+              deps.notifyPopup({ level: 'warn', message: MSG.IDE_REGION_UNKNOWN_POPUP })
+            } else {
+              rt.notifySystem(MSG.IDE_REGION_UNKNOWN_POPUP)
+            }
+            return 'done'
+          }
+          rt.notifySystem(MSG.IDE_REGION_UNKNOWN_COPY)
+          return 'no-selection'
         case 'uipi':
           logWarn(`selection flow blocked by privilege boundary on handle=${handle0}`)
           rt.notifySystem(MSG.UIPI_BLOCKED)
@@ -904,7 +1247,16 @@ export async function runSelectionFlow(
 
     if (mode === 'show') {
       watchdogOwnedByShow = true
-      runShowMode({ text, to, cfg, rt, activeDeps: deps, watchdog, clearWatchdog })
+      runShowMode({
+        text,
+        to,
+        targetContext: capture.targetContext,
+        cfg,
+        rt,
+        activeDeps: deps,
+        watchdog,
+        clearWatchdog
+      })
       return 'done'
     }
 
@@ -945,6 +1297,7 @@ export async function runSelectionFlow(
         pasteKind: capture.pasteKind,
         handle: handle0,
         titleAtStart: capture.titleAtStart,
+        targetContext: capture.targetContext,
         snap: capture.snap,
         seqAfterRestore: capture.seqAfterRestore,
         rt,
@@ -959,6 +1312,7 @@ export async function runSelectionFlow(
     return await runReplaceModeNormal({
       translatedText,
       handle: handle0,
+      targetContext: capture.targetContext,
       snap: capture.snap,
       seqAfterRestore: capture.seqAfterRestore,
       pasteKind: capture.pasteKind,

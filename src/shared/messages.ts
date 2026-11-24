@@ -46,6 +46,15 @@ export const MSG = {
   // --- 终端专用 ---
   TERMINAL_SELECTION_TRANSLATED: '终端选区已译好：按 Enter 直接填入命令行，按 Esc 关闭',
   FORCE_POPUP_REPLACE_REDIRECT: '当前进程已设为防误触保护：已切换为独立输入条，按 Enter 直接填入',
+  IDE_REGION_UNKNOWN_COPY:
+    '无法确认 IDE 当前焦点在编辑区还是终端区，为避免误发终端控制字符已跳过自动取词，请手动复制或使用独立输入模式',
+  IDE_REGION_UNKNOWN_POPUP:
+    '无法确认 IDE 当前焦点在编辑区还是终端区，已切换为独立输入条，按 Enter 直接填入',
+  PASTE_ELEVATED_CLIPBOARD:
+    '目标窗口以更高权限运行，无法直接粘贴；译文已复制到剪贴板，请手动按 Ctrl+V 粘贴',
+  PASTE_CANCELLED_TARGET_CHANGED: '目标窗口已切换或关闭，已取消自动粘贴并恢复原剪贴板',
+  TARGET_CHANGED_AFTER_PARTIAL_DELETE:
+    '目标窗口在删除原文本过程中发生变化，已中止后续粘贴，译文已保留在剪贴板',
 
   // --- 动态格式消息 ---
   inputTooLong: (maxChars: number): string => `输入文本超过 ${maxChars} 字符上限`,

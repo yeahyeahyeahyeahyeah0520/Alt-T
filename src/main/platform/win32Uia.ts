@@ -1,5 +1,20 @@
+import fs from 'node:fs'
+import { join } from 'node:path'
+import { Worker, isMainThread } from 'node:worker_threads'
 import type * as KoffiNS from 'koffi'
-import { logWarn } from '../services/logger'
+import type { IdeProbeResult, UiaProbeReason } from '../../shared/types'
+
+let uiaWarnLogger: ((msg: string) => void) | null = null
+let lastUiaInitError = ''
+
+function logWarn(msg: string): void {
+  lastUiaInitError = msg
+  uiaWarnLogger?.(msg)
+}
+
+export function setUiaWarnLogger(fn: ((msg: string) => void) | null): void {
+  uiaWarnLogger = fn
+}
 
 export interface UiaNodeInfo {
   pid: number
@@ -222,6 +237,9 @@ function walkFocusedElementChain(targetPid: number): UiaNodeInfo[] {
   if (testUiaWalkerOverride !== null) {
     return testUiaWalkerOverride(targetPid)
   }
+  if (isMainThread) {
+    return []
+  }
   if (targetPid <= 0) return []
   const bindings = ensureUia()
   if (!bindings) return []
@@ -327,14 +345,381 @@ function walkFocusedElementChain(targetPid: number): UiaNodeInfo[] {
  * Detect whether the currently focused accessibility element inside an Electron IDE window
  * (`code.exe`, `cursor.exe`, `antigravity.exe`, etc.) belongs to an integrated terminal pane.
  */
-export function isFocusedIdeIntegratedTerminal(targetPid: number, exeName: string): boolean {
-  if (!isIdeHostExeName(exeName)) return false
-  const nodes = walkFocusedElementChain(targetPid)
-  for (const node of nodes) {
-    if (node.pid > 0 && targetPid > 0 && node.pid !== targetPid) continue
-    if (isIdeTerminalUiaNode(node)) {
-      return true
-    }
+const UIA_EDIT_CONTROL_TYPE = 50004
+const UIA_DOCUMENT_CONTROL_TYPE = 50030
+const UIA_PROBE_TIMEOUT_MS = 120
+const UIA_CIRCUIT_BREAKER_THRESHOLD = 3
+const UIA_CIRCUIT_OPEN_MS = 15_000
+
+const EXPLICIT_TERMINAL_CLASS_TOKENS = new Set<string>([
+  'xterm',
+  'xterm-screen',
+  'xterm-helper-textarea',
+  'xterm-accessibility-tree',
+  'terminal-wrapper',
+  'integrated-terminal',
+  'terminal-outer-container'
+])
+
+const NON_EDITOR_CLASS_TOKENS = new Set<string>([
+  'chat-input',
+  'interactive-input-part',
+  'interactive-editor',
+  'scm-editor',
+  'find-widget',
+  'simple-find-part',
+  'suggest-widget',
+  'quick-input-widget',
+  'repl-input-wrapper',
+  'debug-repl',
+  'notebook-cell-output'
+])
+
+function splitClassTokens(className: string): Set<string> {
+  return new Set(
+    className
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean)
+  )
+}
+
+function isExplicitTerminalUiaNode(node: UiaNodeInfo): boolean {
+  const tokens = splitClassTokens(node.className)
+  for (const token of EXPLICIT_TERMINAL_CLASS_TOKENS) {
+    if (tokens.has(token)) return true
+  }
+  const classLower = node.className.trim().toLowerCase()
+  const aidLower = node.automationId.trim().toLowerCase()
+  if (
+    classLower.includes('jediterm') ||
+    classLower.includes('terminalpanel') ||
+    classLower.includes('terminalwidget')
+  ) {
+    return true
+  }
+  if (
+    aidLower === 'terminal' ||
+    aidLower === 'workbench.panel.terminal' ||
+    aidLower.startsWith('workbench.parts.terminal')
+  ) {
+    return true
   }
   return false
+}
+
+function isExcludedNonEditorNode(node: UiaNodeInfo): boolean {
+  const tokens = splitClassTokens(node.className)
+  for (const token of NON_EDITOR_CLASS_TOKENS) {
+    if (tokens.has(token)) return true
+  }
+  const aidLower = node.automationId.trim().toLowerCase()
+  return (
+    aidLower.includes('workbench.view.scm') ||
+    aidLower.includes('workbench.panel.chat') ||
+    aidLower.includes('workbench.view.search') ||
+    aidLower.includes('workbench.panel.repl') ||
+    aidLower.includes('chat-input') ||
+    aidLower.includes('scm-input')
+  )
+}
+
+export function classifyUiaChain(nodes: UiaNodeInfo[], targetPid: number): IdeProbeResult {
+  if (!Array.isArray(nodes) || nodes.length === 0) {
+    return { region: 'unknown', reason: 'uia-empty' }
+  }
+  const matchingNodes = nodes.filter(
+    (node) => targetPid <= 0 || node.pid <= 0 || node.pid === targetPid
+  )
+  if (matchingNodes.length === 0) {
+    return { region: 'unknown', reason: 'uia-pid-mismatch' }
+  }
+  for (const node of matchingNodes) {
+    if (isExplicitTerminalUiaNode(node)) {
+      return { region: 'terminal', reason: 'uia-terminal' }
+    }
+  }
+  for (const node of matchingNodes) {
+    if (isExcludedNonEditorNode(node)) {
+      return { region: 'unknown', reason: 'uia-empty' }
+    }
+  }
+  const hasEditOrDoc = matchingNodes.some(
+    (node) => node.controlType === UIA_EDIT_CONTROL_TYPE || node.controlType === UIA_DOCUMENT_CONTROL_TYPE
+  )
+  const hasEditorLeafToken = matchingNodes.some((node) => {
+    const tokens = splitClassTokens(node.className)
+    return tokens.has('inputarea') || tokens.has('native-edit-context')
+  })
+  const hasEditorHost = matchingNodes.some((node) => {
+    const tokens = splitClassTokens(node.className)
+    const aidLower = node.automationId.trim().toLowerCase()
+    return tokens.has('editor-instance') || aidLower.startsWith('workbench.parts.editor')
+  })
+  const hasMonacoToken = matchingNodes.some((node) => splitClassTokens(node.className).has('monaco-editor'))
+  const hasExplicitSingleEditorNode =
+    !hasMonacoToken &&
+    matchingNodes.some((node) => {
+      const tokens = splitClassTokens(node.className)
+      return (
+        (node.controlType === UIA_EDIT_CONTROL_TYPE || node.controlType === UIA_DOCUMENT_CONTROL_TYPE) &&
+        node.automationId.trim().toLowerCase() === 'editor' &&
+        (tokens.has('inputarea') || tokens.has('native-edit-context'))
+      )
+    })
+  const hasJetBrainsEditor = matchingNodes.some((node) => {
+    const cl = node.className.toLowerCase()
+    return (
+      (cl.includes('editorcomponentimpl') || cl.includes('editorimpl')) &&
+      (node.controlType === UIA_EDIT_CONTROL_TYPE || node.controlType === UIA_DOCUMENT_CONTROL_TYPE)
+    )
+  })
+  if ((hasEditOrDoc && hasEditorLeafToken && hasEditorHost) || hasExplicitSingleEditorNode || hasJetBrainsEditor) {
+    return { region: 'editor', reason: 'uia-editor' }
+  }
+  if (!hasEditorLeafToken) {
+    for (const node of matchingNodes) {
+      if (isIdeTerminalUiaNode(node)) {
+        return { region: 'terminal', reason: 'uia-terminal' }
+      }
+    }
+  }
+  return { region: 'unknown', reason: 'uia-empty' }
+}
+
+export interface UiaWorkerRequest {
+  id: number
+  targetPid: number
+}
+
+export interface UiaWorkerReply {
+  id: number
+  ok: boolean
+  nodes: UiaNodeInfo[]
+  error?: string
+}
+
+export interface UiaWorkerLike {
+  postMessage(value: UiaWorkerRequest): void
+  on(event: 'message', listener: (value: UiaWorkerReply) => void): unknown
+  on(event: 'error', listener: (err: Error) => void): unknown
+  on(event: 'exit', listener: (code: number) => void): unknown
+  off?(event: 'message' | 'error' | 'exit', listener: (...args: unknown[]) => void): unknown
+  removeListener?(event: 'message' | 'error' | 'exit', listener: (...args: unknown[]) => void): unknown
+  terminate(): Promise<number>
+  unref?(): void
+}
+
+let activeUiaWorker: UiaWorkerLike | null = null
+let workerFactoryOverride: (() => UiaWorkerLike) | null = null
+let nextProbeRequestId = 1
+let consecutiveUiaFailures = 0
+let uiaCircuitOpenUntil = 0
+let lastUiaFailureReason: UiaProbeReason = 'uia-error'
+let probeQueue: Promise<void> = Promise.resolve()
+
+export function setUiaWorkerFactoryForTest(factory: (() => UiaWorkerLike) | null): void {
+  workerFactoryOverride = factory
+  consecutiveUiaFailures = 0
+  uiaCircuitOpenUntil = 0
+  lastUiaFailureReason = 'uia-error'
+  if (activeUiaWorker) {
+    const old = activeUiaWorker
+    activeUiaWorker = null
+    void old.terminate().catch(() => {})
+  }
+}
+
+export async function shutdownWin32UiaWorker(): Promise<void> {
+  if (!activeUiaWorker) return
+  const worker = activeUiaWorker
+  activeUiaWorker = null
+  await worker.terminate().catch(() => {})
+}
+
+function createDefaultUiaWorker(): UiaWorkerLike {
+  const jsPath = join(__dirname, 'win32UiaWorker.js')
+  if (fs.existsSync(jsPath)) {
+    const w = new Worker(jsPath)
+    w.unref()
+    return w
+  }
+  const tsPath = join(__dirname, 'win32UiaWorker.ts')
+  const bootstrap = `require(${JSON.stringify(require.resolve('tsx/cjs'))}); require(${JSON.stringify(tsPath)});`
+  const w = new Worker(bootstrap, { eval: true })
+  w.unref()
+  return w
+}
+
+function getOrCreateUiaWorker(): UiaWorkerLike {
+  if (activeUiaWorker) return activeUiaWorker
+  activeUiaWorker = workerFactoryOverride ? workerFactoryOverride() : createDefaultUiaWorker()
+  return activeUiaWorker
+}
+
+function detachListener(
+  worker: UiaWorkerLike,
+  event: 'message' | 'error' | 'exit',
+  listener: (...args: unknown[]) => void
+): void {
+  if (typeof worker.off === 'function') {
+    worker.off(event, listener)
+  } else if (typeof worker.removeListener === 'function') {
+    worker.removeListener(event, listener)
+  }
+}
+
+function recordUiaFailure(reason: UiaProbeReason): void {
+  consecutiveUiaFailures += 1
+  lastUiaFailureReason = reason
+  if (consecutiveUiaFailures >= UIA_CIRCUIT_BREAKER_THRESHOLD) {
+    uiaCircuitOpenUntil = Date.now() + UIA_CIRCUIT_OPEN_MS
+  }
+}
+
+function resetUiaFailures(): void {
+  consecutiveUiaFailures = 0
+  uiaCircuitOpenUntil = 0
+}
+
+function runWorkerProbeOnce(targetPid: number, timeoutMs: number): Promise<IdeProbeResult> {
+  if (uiaCircuitOpenUntil > Date.now()) {
+    return Promise.resolve({ region: 'unknown', reason: lastUiaFailureReason })
+  }
+  let worker: UiaWorkerLike
+  try {
+    worker = getOrCreateUiaWorker()
+  } catch (err) {
+    uiaWarnLogger?.(`UIA worker spawn failed: ${err instanceof Error ? err.message : String(err)}`)
+    recordUiaFailure('uia-error')
+    return Promise.resolve({ region: 'unknown', reason: 'uia-error' })
+  }
+
+  const reqId = nextProbeRequestId++
+  return new Promise<IdeProbeResult>((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const cleanup = (): void => {
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
+      detachListener(worker, 'message', onMessage as (...args: unknown[]) => void)
+      detachListener(worker, 'error', onError as (...args: unknown[]) => void)
+      detachListener(worker, 'exit', onExit as (...args: unknown[]) => void)
+    }
+
+    const finish = (result: IdeProbeResult): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(result)
+    }
+
+    const onMessage = (reply: UiaWorkerReply): void => {
+      if (!reply || reply.id !== reqId) return
+      if (!reply.ok) {
+        const reason: UiaProbeReason =
+          reply.error === 'uia-unavailable' ? 'uia-unavailable' : 'uia-error'
+        if (reply.error && reply.error !== 'uia-unavailable') {
+          uiaWarnLogger?.(`Win32 UIA worker error: ${reply.error}`)
+        }
+        recordUiaFailure(reason)
+        finish({ region: 'unknown', reason })
+        return
+      }
+      resetUiaFailures()
+      finish(classifyUiaChain(reply.nodes, targetPid))
+    }
+
+    const onError = (err: Error): void => {
+      uiaWarnLogger?.(`Win32 UIA worker exception: ${err.message}`)
+      if (activeUiaWorker === worker) activeUiaWorker = null
+      void worker.terminate().catch(() => {})
+      recordUiaFailure('uia-error')
+      finish({ region: 'unknown', reason: 'uia-error' })
+    }
+
+    const onExit = (): void => {
+      if (activeUiaWorker === worker) activeUiaWorker = null
+      recordUiaFailure('uia-error')
+      finish({ region: 'unknown', reason: 'uia-error' })
+    }
+
+    worker.on('message', onMessage)
+    worker.on('error', onError)
+    worker.on('exit', onExit)
+
+    timer = setTimeout(() => {
+      if (activeUiaWorker === worker) activeUiaWorker = null
+      void worker.terminate().catch(() => {})
+      recordUiaFailure('uia-timeout')
+      finish({ region: 'unknown', reason: 'uia-timeout' })
+    }, timeoutMs)
+
+    try {
+      worker.postMessage({ id: reqId, targetPid })
+    } catch (err) {
+      if (activeUiaWorker === worker) activeUiaWorker = null
+      void worker.terminate().catch(() => {})
+      uiaWarnLogger?.(
+        `Win32 UIA worker postMessage failed: ${err instanceof Error ? err.message : String(err)}`
+      )
+      recordUiaFailure('uia-error')
+      finish({ region: 'unknown', reason: 'uia-error' })
+    }
+  })
+}
+
+export function walkFocusedElementChainNative(targetPid: number): {
+  ok: boolean
+  nodes: UiaNodeInfo[]
+  error?: string
+} {
+  if (targetPid <= 0) return { ok: true, nodes: [] }
+  const bindings = ensureUia()
+  if (!bindings) {
+    return {
+      ok: false,
+      nodes: [],
+      error: lastUiaInitError || 'uia-unavailable'
+    }
+  }
+  const nodes = walkFocusedElementChain(targetPid)
+  return { ok: true, nodes }
+}
+
+export async function probeFocusedIdeRegion(
+  targetPid: number,
+  exeName: string,
+  options?: { timeoutMs?: number }
+): Promise<IdeProbeResult> {
+  if (!isIdeHostExeName(exeName)) {
+    return { region: 'unknown', reason: 'uia-empty' }
+  }
+  if (testUiaWalkerOverride !== null) {
+    try {
+      return classifyUiaChain(testUiaWalkerOverride(targetPid), targetPid)
+    } catch {
+      return { region: 'unknown', reason: 'uia-error' }
+    }
+  }
+  if (process.platform !== 'win32' && workerFactoryOverride === null) {
+    return { region: 'unknown', reason: 'uia-unavailable' }
+  }
+  const timeoutMs = Math.max(10, options?.timeoutMs ?? UIA_PROBE_TIMEOUT_MS)
+  const task = probeQueue.then(() => runWorkerProbeOnce(targetPid, timeoutMs))
+  probeQueue = task.then(
+    () => undefined,
+    () => undefined
+  )
+  return task
+}
+
+export function isFocusedIdeIntegratedTerminal(targetPid: number, exeName: string): boolean {
+  if (!isIdeHostExeName(exeName)) return false
+  if (testUiaWalkerOverride === null) return false
+  return classifyUiaChain(testUiaWalkerOverride(targetPid), targetPid).region === 'terminal'
 }

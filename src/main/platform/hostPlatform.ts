@@ -19,13 +19,17 @@ import {
   sendMacCopyShortcut,
   sendMacPasteShortcut
 } from './macInput'
+import { shutdownWin32UiaWorker } from './win32Uia'
 import {
+  classifyWindowContext as win32ClassifyWindowContext,
   classifyWindowKind as win32ClassifyWindowKind,
   focusWindow as win32FocusWindow,
   getClipboardSequenceNumber as win32GetClipboardSequenceNumber,
   getCurrentDesktopName as win32GetCurrentDesktopName,
   getForegroundWindow as win32GetForegroundWindow,
+  getWindowClassName as win32GetWindowClassName,
   getWindowExeName as win32GetWindowExeName,
+  getWindowPid as win32GetWindowPid,
   getWindowTitle as win32GetWindowTitle,
   injectMaskKey as win32InjectMaskKey,
   isOwnProcessWindow as win32IsOwnProcessWindow,
@@ -38,6 +42,7 @@ import {
   sendCopyForWindow as win32SendCopyForWindow,
   sendPasteForWindow as win32SendPasteForWindow,
   writePrivateClipboardText as win32WritePrivateClipboardText,
+  type WindowClassification,
   type WindowInputKind
 } from './win32Input'
 
@@ -51,7 +56,7 @@ export {
   WAYLAND_SYNTHETIC_HANDLE,
   type LinuxInputBackend
 }
-export type { WindowInputKind }
+export type { WindowClassification, WindowInputKind } from './win32Classifier'
 
 export interface CustomTerminalExeSets {
   extraWt?: ReadonlySet<string>
@@ -312,6 +317,36 @@ export function getTargetCopyKind(handle: number, customSets?: CustomTerminalExe
 
 export function getTargetPasteKind(handle: number, customSets?: CustomTerminalExeSets): WindowInputKind {
   return getTargetInputKind(handle, customSets)
+}
+
+export function getTargetPid(handle: number): number {
+  if (process.platform === 'win32') {
+    return win32GetWindowPid(handle)
+  }
+  return 0
+}
+
+export function getTargetClassName(handle: number): string {
+  if (process.platform === 'win32') {
+    return win32GetWindowClassName(handle)
+  }
+  return ''
+}
+
+export async function getTargetWindowClassification(
+  handle: number,
+  customSets?: CustomTerminalExeSets
+): Promise<WindowClassification> {
+  if (process.platform === 'win32') {
+    return win32ClassifyWindowContext(handle, customSets?.extraWt, customSets?.extraConhost)
+  }
+  return { inputKind: getTargetInputKind(handle, customSets) }
+}
+
+export async function shutdownPlatformWorkers(): Promise<void> {
+  if (process.platform === 'win32') {
+    await shutdownWin32UiaWorker()
+  }
 }
 
 export async function dispatchBackspaces(charCount: number): Promise<void> {

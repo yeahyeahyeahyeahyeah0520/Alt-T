@@ -1,4 +1,12 @@
+import type { IdeRegionKind, UiaProbeReason } from '../../shared/types'
+
 export type WindowInputKind = 'normal' | 'wt' | 'conhost'
+
+export interface WindowClassification {
+  inputKind: WindowInputKind
+  ideRegion?: IdeRegionKind
+  uiaReason?: UiaProbeReason
+}
 
 const WT_CLASS_NAMES = new Set<string>([
   'cascadia_hosting_window_class',
@@ -89,6 +97,20 @@ export function classifyTerminalWindow(
   if (WT_CLASS_NAMES.has(lowerClass)) return 'wt'
   if (CONHOST_CLASS_NAMES.has(lowerClass) || lowerClass.startsWith('cygwin/x')) return 'conhost'
   return classifyExeName(exeName, extraWtExes, extraConhostExes)
+}
+
+export function resolveIdeWindowClassification(
+  baseKind: WindowInputKind,
+  ideRegion: IdeRegionKind,
+  uiaReason: UiaProbeReason
+): WindowClassification {
+  if (baseKind !== 'normal') {
+    return { inputKind: baseKind }
+  }
+  if (ideRegion === 'terminal') {
+    return { inputKind: 'wt', ideRegion: 'terminal', uiaReason }
+  }
+  return { inputKind: 'normal', ideRegion, uiaReason }
 }
 
 /**

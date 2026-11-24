@@ -3,6 +3,8 @@ import { logInfo, logWarn } from '../services/logger'
 import {
   classifyTerminalWindow,
   isNonTargetWindowClass,
+  resolveIdeWindowClassification,
+  type WindowClassification,
   type WindowInputKind
 } from './win32Classifier'
 import {
@@ -14,15 +16,24 @@ import {
   type InputEvent,
   type Win32Api
 } from './win32Ffi'
-import { isFocusedIdeIntegratedTerminal, isIdeHostExeName } from './win32Uia'
+import {
+  isFocusedIdeIntegratedTerminal,
+  isIdeHostExeName,
+  probeFocusedIdeRegion,
+  setUiaWarnLogger
+} from './win32Uia'
 
 export {
   classifyExeName,
   classifyTerminalWindow,
   isNonTargetWindowClass,
+  resolveIdeWindowClassification,
+  type WindowClassification,
   type WindowInputKind
 } from './win32Classifier'
 export { setWin32ApiForTest, type Win32Api } from './win32Ffi'
+
+setUiaWarnLogger(logWarn)
 
 const INPUT_KEYBOARD = 1
 const KEYEVENTF_EXTENDEDKEY = 0x0001
@@ -166,7 +177,7 @@ export function isWindowMinimized(hwnd: number): boolean {
   }
 }
 
-function getWindowPid(hwnd: number): number {
+export function getWindowPid(hwnd: number): number {
   if (!hwnd) return 0
   try {
     const api = ensureWin32()
@@ -178,7 +189,7 @@ function getWindowPid(hwnd: number): number {
   }
 }
 
-function getWindowClassName(hwnd: number): string {
+export function getWindowClassName(hwnd: number): string {
   if (!hwnd) return ''
   try {
     const api = ensureWin32()
@@ -255,6 +266,22 @@ export function classifyWindowKind(
     }
   }
   return baseKind
+}
+
+export async function classifyWindowContext(
+  hwnd: number,
+  extraWtExes: ReadonlySet<string> = new Set(),
+  extraConhostExes: ReadonlySet<string> = new Set()
+): Promise<WindowClassification> {
+  const className = getWindowClassName(hwnd)
+  const exeName = getWindowExeName(hwnd)
+  const baseKind = classifyTerminalWindow(className, exeName, extraWtExes, extraConhostExes)
+  if (baseKind === 'normal' && isIdeHostExeName(exeName)) {
+    const pid = getWindowPid(hwnd)
+    const probe = await probeFocusedIdeRegion(pid, exeName)
+    return resolveIdeWindowClassification(baseKind, probe.region, probe.reason)
+  }
+  return { inputKind: baseKind }
 }
 
 export function isOwnProcessWindow(hwnd: number, selfPid = process.pid): boolean {

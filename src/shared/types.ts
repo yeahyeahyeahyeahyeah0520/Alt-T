@@ -219,12 +219,32 @@ export interface ConfigSetReply {
   hotkeyConflicts: Array<{ key: keyof HotkeyConfig; accelerator: string }>
 }
 
+export type PopupPasteStatus = 'pasted' | 'clipboard-only' | 'cancelled' | 'error'
+
+export type IdeRegionKind = 'editor' | 'terminal' | 'unknown'
+
+export type UiaProbeReason =
+  | 'uia-terminal'
+  | 'uia-editor'
+  | 'uia-empty'
+  | 'uia-pid-mismatch'
+  | 'uia-timeout'
+  | 'uia-error'
+  | 'uia-unavailable'
+
+export interface IdeProbeResult {
+  region: IdeRegionKind
+  reason: UiaProbeReason
+}
+
 export interface PopupPasteArgs {
   text: string
 }
 
 export interface PopupPasteReply {
   ok: boolean
+  status: PopupPasteStatus
+  reason?: string
   message?: string
 }
 
@@ -269,6 +289,8 @@ export interface PopupShowPush {
   requestId?: string
   to: TargetLang
   directPaste?: boolean
+  targetApp?: string
+  ideRegion?: IdeRegionKind
 }
 
 export interface NotifyPush {

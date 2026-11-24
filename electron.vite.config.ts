@@ -18,7 +18,15 @@ function tightenProductionCspPlugin(): Plugin {
 
 export default defineConfig({
   main: {
-    build: { outDir: 'out/main' }
+    build: {
+      outDir: 'out/main',
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          win32UiaWorker: resolve(__dirname, 'src/main/platform/win32UiaWorker.ts')
+        }
+      }
+    }
   },
   preload: {
     build: { outDir: 'out/preload' }

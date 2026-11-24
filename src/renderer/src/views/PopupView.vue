@@ -128,8 +128,12 @@ async function doPasteToTarget(text: string): Promise<void> {
   uiState.value.pasting = true
   try {
     const res = await window.api.popupPasteToTarget({ text })
-    if (!res.ok && res.message) {
-      showLocalToast('error', res.message)
+    if (!res.ok) {
+      const level: NotifyPush['level'] =
+        res.status === 'clipboard-only' || res.status === 'cancelled' ? 'warn' : 'error'
+      if (res.message) {
+        showLocalToast(level, res.message)
+      }
     }
   } catch (err) {
     showLocalToast('error', err instanceof Error ? err.message : String(err))

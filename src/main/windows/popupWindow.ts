@@ -28,6 +28,7 @@ export interface PopupWindowDeps {
 export interface PopupWindowController {
   showAtCursor(payload?: PopupShowPush): void
   showInactiveAtCursor(payload?: PopupShowPush): void
+  reshowInactive(): void
   showInput(): void
   showDirectInput(targetHandleOverride?: number): void
   toggleInput(): void
@@ -391,6 +392,11 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
     win.hide()
   }
 
+  function reshowInactive(): void {
+    if (win.isDestroyed()) return
+    win.showInactive()
+  }
+
   function getLastTargetHandle(): number {
     return lastTargetHandle
   }
@@ -463,6 +469,7 @@ export function createPopupWindow(deps: PopupWindowDeps): PopupWindowController 
   return {
     showAtCursor,
     showInactiveAtCursor,
+    reshowInactive,
     showInput,
     showDirectInput,
     toggleInput,

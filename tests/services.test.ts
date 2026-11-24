@@ -624,6 +624,11 @@ describe('selectionService hardening', () => {
     })
 
     const reply = await pasteTextToWindow(888, 'Translated prompt')
-    assert.deepEqual(reply, { ok: true })
+    assert.deepEqual(reply, {
+      ok: false,
+      status: 'clipboard-only',
+      reason: 'uipi-elevated',
+      message: MSG.UIPI_PASTE_FALLBACK
+    })
   })
 })

@@ -10,6 +10,7 @@ import { hideDockOnMacOS, isRunningOnHiddenDesktop } from './platform/hostPlatfo
 import { configStore } from './services/configStore'
 import { hotkeyService } from './services/hotkeyService'
 import { logError, logInfo, logWarn, setRedactedSecretProvider } from './services/logger'
+import { shutdownPlatformWorkers } from './platform/hostPlatform'
 import { configureSelectionService, pasteTextToWindow } from './services/selectionService'
 import { createTranslateService, type TranslateService } from './services/translateService'
 import { createTray, type TrayController } from './tray'
@@ -159,6 +160,9 @@ function main(): void {
         },
         showInactiveAtCursor: (payload) => {
           activePopup.showInactiveAtCursor(payload)
+        },
+        reshowPopupInactive: () => {
+          activePopup.reshowInactive()
         },
         openDirectInput: (targetHandle) => {
           activePopup.showDirectInput(targetHandle)
@@ -333,6 +337,7 @@ function main(): void {
     hotkeyService.dispose()
     tray?.destroy()
     translateService?.disposeAll()
+    void shutdownPlatformWorkers()
     logInfo('quit')
   })
 }

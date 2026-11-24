@@ -80,7 +80,12 @@ const api: RendererApi = {
   popupPasteToTarget: (args: PopupPasteArgs): Promise<PopupPasteReply> =>
     invokeWithFallback<PopupPasteReply>(
       IPC_CHANNELS.popupPasteToTarget,
-      () => ({ ok: false, message: MSG.MAIN_OUTDATED }),
+      () => ({
+        ok: false,
+        status: 'error',
+        reason: 'main-outdated',
+        message: MSG.MAIN_OUTDATED
+      }),
       args
     ),
   settingsOpen: (): Promise<void> =>
