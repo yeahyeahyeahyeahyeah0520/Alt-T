@@ -6,11 +6,15 @@ import { setQuitting } from './appState'
 import { createCooldownGate, redactSecretsInText } from './core/redact'
 import { broadcastConfigChanged, registerIpc } from './ipc'
 import { syncAutoLaunch } from './platform/autoLaunch'
-import { hideDockOnMacOS, isRunningOnHiddenDesktop } from './platform/hostPlatform'
+import {
+  hideDockOnMacOS,
+  isRunningOnHiddenDesktop,
+  setWin32UiaWorkerScriptPath,
+  shutdownPlatformWorkers
+} from './platform/hostPlatform'
 import { configStore } from './services/configStore'
 import { hotkeyService } from './services/hotkeyService'
 import { logError, logInfo, logWarn, setRedactedSecretProvider } from './services/logger'
-import { shutdownPlatformWorkers } from './platform/hostPlatform'
 import { configureSelectionService, pasteTextToWindow } from './services/selectionService'
 import { createTranslateService, type TranslateService } from './services/translateService'
 import { createTray, type TrayController } from './tray'
@@ -121,6 +125,7 @@ function main(): void {
       logInfo(
         `boot: Electron ${process.versions.electron}, Node ${process.versions.node}, ${process.arch}`
       )
+      setWin32UiaWorkerScriptPath(join(__dirname, 'win32UiaWorker.js'))
 
       const isFirstRun = !SMOKE && !configStore.hasSavedConfigFile()
       const cfg = configStore.load()

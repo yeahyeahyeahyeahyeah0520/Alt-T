@@ -1,5 +1,5 @@
 import fs from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { Worker, isMainThread } from 'node:worker_threads'
 import type * as KoffiNS from 'koffi'
 import type { IdeProbeResult, UiaProbeReason } from '../../shared/types'
@@ -513,11 +513,23 @@ export interface UiaWorkerLike {
 
 let activeUiaWorker: UiaWorkerLike | null = null
 let workerFactoryOverride: (() => UiaWorkerLike) | null = null
+let configuredWorkerScriptPath: string | null = null
 let nextProbeRequestId = 1
 let consecutiveUiaFailures = 0
 let uiaCircuitOpenUntil = 0
 let lastUiaFailureReason: UiaProbeReason = 'uia-error'
 let probeQueue: Promise<void> = Promise.resolve()
+
+export function setWin32UiaWorkerScriptPath(workerPath: string | null): void {
+  const normalized = typeof workerPath === 'string' && workerPath.trim() !== '' ? workerPath.trim() : null
+  if (configuredWorkerScriptPath === normalized) return
+  configuredWorkerScriptPath = normalized
+  if (activeUiaWorker && workerFactoryOverride === null) {
+    const old = activeUiaWorker
+    activeUiaWorker = null
+    void old.terminate().catch(() => {})
+  }
+}
 
 export function setUiaWorkerFactoryForTest(factory: (() => UiaWorkerLike) | null): void {
   workerFactoryOverride = factory
@@ -538,15 +550,70 @@ export async function shutdownWin32UiaWorker(): Promise<void> {
   await worker.terminate().catch(() => {})
 }
 
+export function toUnpackedAsarPath(candidate: string): string {
+  const nativeMarker = `${sep}app.asar${sep}`
+  if (candidate.includes(nativeMarker)) {
+    return candidate.replace(nativeMarker, `${sep}app.asar.unpacked${sep}`)
+  }
+  const posixMarker = '/app.asar/'
+  if (candidate.includes(posixMarker)) {
+    return candidate.replace(posixMarker, '/app.asar.unpacked/')
+  }
+  return candidate
+}
+
+export function resolveUiaWorkerTarget(options?: {
+  baseDir?: string
+  explicitPath?: string | null
+  existsSync?: (p: string) => boolean
+}): { kind: 'js' | 'ts'; path: string; searched: string[] } {
+  const baseDir = options?.baseDir ?? __dirname
+  const explicit = options?.explicitPath !== undefined ? options.explicitPath : configuredWorkerScriptPath
+  const exists = options?.existsSync ?? fs.existsSync
+
+  const rawJsCandidates = [
+    ...(explicit ? [explicit] : []),
+    join(baseDir, 'win32UiaWorker.js'),
+    join(baseDir, '..', 'win32UiaWorker.js')
+  ]
+  const jsCandidates: string[] = []
+  for (const candidate of rawJsCandidates) {
+    const unpacked = toUnpackedAsarPath(candidate)
+    if (unpacked !== candidate && !jsCandidates.includes(unpacked)) {
+      jsCandidates.push(unpacked)
+    }
+    if (!jsCandidates.includes(candidate)) {
+      jsCandidates.push(candidate)
+    }
+  }
+
+  const searched: string[] = []
+  for (const candidate of jsCandidates) {
+    searched.push(candidate)
+    if (exists(candidate)) {
+      return { kind: 'js', path: candidate, searched }
+    }
+  }
+
+  const tsCandidates = [join(baseDir, 'win32UiaWorker.ts'), join(baseDir, '..', 'win32UiaWorker.ts')]
+  for (const tsPath of tsCandidates) {
+    searched.push(tsPath)
+    if (exists(tsPath)) {
+      return { kind: 'ts', path: tsPath, searched }
+    }
+  }
+
+  throw new Error(`Win32 UIA worker script not found (searched: ${searched.join(', ')})`)
+}
+
 function createDefaultUiaWorker(): UiaWorkerLike {
-  const jsPath = join(__dirname, 'win32UiaWorker.js')
-  if (fs.existsSync(jsPath)) {
-    const w = new Worker(jsPath)
+  const target = resolveUiaWorkerTarget()
+  if (target.kind === 'js') {
+    const w = new Worker(target.path)
     w.unref()
     return w
   }
-  const tsPath = join(__dirname, 'win32UiaWorker.ts')
-  const bootstrap = `require(${JSON.stringify(require.resolve('tsx/cjs'))}); require(${JSON.stringify(tsPath)});`
+  const bootstrap = `require(${JSON.stringify(require.resolve('tsx/cjs'))}); require(${JSON.stringify(target.path)});`
   const w = new Worker(bootstrap, { eval: true })
   w.unref()
   return w
@@ -554,8 +621,19 @@ function createDefaultUiaWorker(): UiaWorkerLike {
 
 function getOrCreateUiaWorker(): UiaWorkerLike {
   if (activeUiaWorker) return activeUiaWorker
-  activeUiaWorker = workerFactoryOverride ? workerFactoryOverride() : createDefaultUiaWorker()
-  return activeUiaWorker
+  const w = workerFactoryOverride ? workerFactoryOverride() : createDefaultUiaWorker()
+  activeUiaWorker = w
+  w.on('error', () => {
+    if (activeUiaWorker === w) {
+      activeUiaWorker = null
+    }
+  })
+  w.on('exit', () => {
+    if (activeUiaWorker === w) {
+      activeUiaWorker = null
+    }
+  })
+  return w
 }
 
 function detachListener(

@@ -40,6 +40,9 @@ jobs:
       - name: Build production bundles
         run: npm run build
 
+      - name: Verify built UIA worker chunk path
+        run: npm run smoke:uia
+
       - name: Probe Win32 koffi FFI layout
         run: node scripts/probe-koffi.mjs
 
@@ -90,3 +93,6 @@ jobs:
 
       - name: Build production bundles
         run: npm run build
+
+      - name: Verify built UIA worker chunk path
+        run: npm run smoke:uia

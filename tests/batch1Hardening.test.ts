@@ -1,15 +1,18 @@
 import { describe, it, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { join, resolve } from 'node:path'
 import { DEFAULT_CONFIG, type AppConfig, type NotifyPush, type PopupShowPush } from '../src/shared/types'
 import { MSG } from '../src/shared/messages'
 import type { ClipboardSnapshot } from '../src/main/platform/clipboardBackup'
 import {
   classifyUiaChain,
   probeFocusedIdeRegion,
+  resolveUiaWorkerTarget,
   setUiaWorkerFactoryForTest,
   setWin32UiaForTest,
   shutdownWin32UiaWorker,
+  toUnpackedAsarPath,
   type UiaWorkerLike,
   type UiaWorkerReply,
   type UiaWorkerRequest
@@ -492,5 +495,62 @@ describe('Batch 1 hardening (ALT-01 / ALT-02 / ALT-06)', () => {
     const okReply = await pasteTextToWindow(500, 'Clean text')
     assert.deepEqual(okReply, { ok: true, status: 'pasted' })
     assert.equal(h.pasteCalls.length, 1)
+  })
+
+  it('T03b (P1): resolves win32UiaWorker.js across chunks/ parent, unpacked ASAR, dev .ts fallback, and throws descriptive error when absent', () => {
+    const chunkBase = resolve('/app', 'out', 'main', 'chunks')
+    const parentWorker = resolve('/app', 'out', 'main', 'win32UiaWorker.js')
+    const resolvedFromChunk = resolveUiaWorkerTarget({
+      baseDir: chunkBase,
+      existsSync: (p) => p === parentWorker
+    })
+    assert.deepEqual(resolvedFromChunk.kind, 'js')
+    assert.equal(resolvedFromChunk.path, parentWorker)
+
+    const asarChunkBase = resolve('/opt', 'Alt-T', 'resources', 'app.asar', 'out', 'main', 'chunks')
+    const asarParentJs = resolve('/opt', 'Alt-T', 'resources', 'app.asar', 'out', 'main', 'win32UiaWorker.js')
+    const unpackedParentJs = resolve(
+      '/opt',
+      'Alt-T',
+      'resources',
+      'app.asar.unpacked',
+      'out',
+      'main',
+      'win32UiaWorker.js'
+    )
+    assert.equal(toUnpackedAsarPath(asarParentJs), unpackedParentJs)
+    const resolvedFromAsar = resolveUiaWorkerTarget({
+      baseDir: asarChunkBase,
+      existsSync: (p) => p === unpackedParentJs || p === asarParentJs
+    })
+    assert.equal(resolvedFromAsar.kind, 'js')
+    assert.equal(resolvedFromAsar.path, unpackedParentJs)
+
+    const explicitWorker = resolve('/custom', 'win32UiaWorker.js')
+    const resolvedExplicit = resolveUiaWorkerTarget({
+      baseDir: chunkBase,
+      explicitPath: explicitWorker,
+      existsSync: (p) => p === explicitWorker || p === parentWorker
+    })
+    assert.equal(resolvedExplicit.kind, 'js')
+    assert.equal(resolvedExplicit.path, explicitWorker)
+
+    const devBase = resolve('/repo', 'src', 'main', 'platform')
+    const devWorkerTs = join(devBase, 'win32UiaWorker.ts')
+    const resolvedDevTs = resolveUiaWorkerTarget({
+      baseDir: devBase,
+      existsSync: (p) => p === devWorkerTs
+    })
+    assert.equal(resolvedDevTs.kind, 'ts')
+    assert.equal(resolvedDevTs.path, devWorkerTs)
+
+    assert.throws(
+      () =>
+        resolveUiaWorkerTarget({
+          baseDir: chunkBase,
+          existsSync: () => false
+        }),
+      /Win32 UIA worker script not found.*searched:/
+    )
   })
 })

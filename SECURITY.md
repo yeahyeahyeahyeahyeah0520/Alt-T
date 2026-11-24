@@ -53,7 +53,7 @@ Because disabling `RendererCodeIntegrity` relaxes Chromium's renderer DLL signat
   - `captureTargetContext()` snapshots the foreground handle, PID, executable basename, and window class before clipboard/shortcut operations.
   - `verifyTargetContext()` re-checks handle/PID/exe before hiding the popup, again before `dispatchPasteShortcut`, and before each 20-character `VK_BACK` batch in Option B terminal replacement — preventing focus races from deleting or pasting into an unintended window.
 - **Isolated Win32 COM UIA Worker (`src/main/platform/win32UiaWorker.ts`, `win32Uia.ts`, `win32Classifier.ts`)**:
-  - Runs UIA COM inspection on a persistent `worker_threads` thread off Electron's main STA UI thread, guarded by a `120ms` per-probe timeout and 3-failure / `15s` circuit breaker.
+  - Runs UIA COM inspection on a persistent `worker_threads` thread off Electron's main STA UI thread (resolved across chunked `out/main/chunks/` and `app.asar.unpacked`), guarded by a `120ms` per-probe timeout and 3-failure / `15s` circuit breaker.
   - Classifies IDE sub-regions into `'editor' | 'terminal' | 'unknown'`; when an IDE window resolves to `'unknown'` (or non-editor widgets such as chat/SCM/find boxes), Alt-T refuses blind `Ctrl+C` / `Ctrl+Shift+C` injection.
 - **Fail-Safe Behavior**:
   - Selection shortcuts (`Alt+R` / `Alt+E`) abort cleanly before touching the clipboard when targeting an elevated window.
@@ -66,7 +66,7 @@ Because disabling `RendererCodeIntegrity` relaxes Chromium's renderer DLL signat
 
 - **Fail-Closed Encrypted Storage (`src/main/services/configStore.ts`)**:
   - Uses Electron `safeStorage` (`DPAPI` on Windows; rejects Linux insecure `basic_text` backend via `getSelectedStorageBackend()`). When `safeStorage.isEncryptionAvailable()` is true, `openai.apiKey` is stored encrypted in `openai.encryptedKey` and `openai.apiKey` is cleared (`""`) on disk.
-  - Never falls back to writing plaintext `openai.apiKey` when `safeStorage` is unavailable or encryption throws; surfaces a storage warning in IPC (`apiKeyPersistence`) and preserves or explicitly clears ciphertext rather than leaking credentials.
+  - Never falls back to writing plaintext `openai.apiKey` when `safeStorage` is unavailable or encryption throws; on `load()`, any legacy plaintext `openai.apiKey` found on disk is immediately scrubbed from `config.json` (kept only in memory as `memory-only` if encryption is unavailable, or re-encrypted via `safeStorage` when available, while surfacing `plaintextRemainOnDisk` / `apiKeyPersistence` if the scrub write fails).
 - **End-to-End Redaction (`src/main/core/redact.ts`, `logger.ts`, `httpClient.ts`, `index.ts`)**:
   - `redactSecretsInText` and `redactUrlCredentials` strip `http(s)://user:pass@` proxy/URL credentials, `Authorization: Bearer ...` headers, `Bearer` tokens, `sk-...` / `sk-proj-...` / `AIza...` key patterns, and the currently loaded `apiKey`.
   - All log lines (`alt-t.log`), HTTP error snippets, and `uncaughtException` system notifications pass through redaction, with crash notifications rate-limited by a 60-second cooldown gate (`createCooldownGate(60_000)`).
@@ -93,7 +93,7 @@ Because disabling `RendererCodeIntegrity` relaxes Chromium's renderer DLL signat
   - `isLoopbackBaseUrl()` permits an empty `apiKey` only for `localhost`, `127.0.0.0/8`, and `::1` (rejecting embedded credentials). Non-loopback endpoints with an empty `apiKey` fail locally with `ProviderError('CONFIG')` before any socket connection is attempted.
   - When `localOnlyMode: true` is enabled, Alt-T blocks external providers (`edge`) and non-loopback URLs across `translateWithFallback`, `testProviderDraft`, and `createHttp`, verifies resolved DNS targets via `isLoopbackIp()` inside an isolated direct `undici.Agent`, bypasses proxies, and rejects HTTP `3xx` redirects (`LOCAL_ONLY_BLOCKED`).
 - **Protected Technical Fragments & Prompt Injection Hardening (`src/main/core/protectedText.ts`, `openaiPayload.ts`)**:
-  - With `protectTechnicalText: true` (default), fenced/inline code, URLs, Windows/POSIX paths, CLI flags, env vars, and `@mentions` are replaced with collision-free placeholders (`[[ALTT_N]]`) before translation and verified upon completion; missing, duplicated, invented, or corrupted placeholders cancel auto-paste and hold the draft for manual confirmation.
+  - With `protectTechnicalText: true` (default), fenced/inline code, URLs, Windows/POSIX paths, CLI flags, env vars, and `@mentions` are replaced with collision-free canonical placeholders (`[[ALTT_N]]`, rejecting malformed variants such as leading-zero `[[ALTT_00]]`) before translation and verified upon completion; missing, duplicated, invented, or corrupted placeholders cancel auto-paste and hold the draft for manual confirmation.
   - Built-in `'translate'` and `'cli-prompt'` templates explicitly instruct the model to treat user input strictly as literal source text and never follow instructions or execute commands embedded inside the text.
   - `renderPrompt` substitutes `{{text}}` last with a function replacer so literal `{{to}}` / `{{toName}}` sequences inside user text are never re-expanded.
 

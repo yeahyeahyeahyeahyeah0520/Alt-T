@@ -42,6 +42,7 @@ export interface ConfigStoreInstance {
   getCachedApiKey: () => string
   getApiKeyPersistence: () => ApiKeyPersistence
   hasUnreadableEncryptedKey: () => boolean
+  hasPlaintextOnDiskRisk?: () => boolean
 }
 
 function defaultSleepSync(ms: number): void {
@@ -83,6 +84,7 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
   let writeSeq = 0
   let preservedEncryptedKey = ''
   let decryptFailedOnLoad = false
+  let plaintextRemainOnDisk = false
   let apiKeyPersistence: ApiKeyPersistence = 'empty'
   const ephemeralHistoryIds = new Set<string>()
 
@@ -334,6 +336,7 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
     const commitCryptoState = (): void => {
       preservedEncryptedKey = serialized.nextPreservedEncryptedKey
       decryptFailedOnLoad = serialized.nextDecryptFailedOnLoad
+      plaintextRemainOnDisk = false
       apiKeyPersistence = serialized.nextPersistence
     }
 
@@ -380,12 +383,14 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
     if (!deps.fs.existsSync(configPath)) {
       preservedEncryptedKey = ''
       decryptFailedOnLoad = false
+      plaintextRemainOnDisk = false
       apiKeyPersistence = 'empty'
       cachedConfig = mergeConfig(null)
       return get()
     }
 
     try {
+      plaintextRemainOnDisk = false
       const rawText = deps.fs.readFileSync(configPath, 'utf8')
       const parsed: unknown = JSON.parse(rawText)
       const { hydrated, hadLegacyPlaintext } = hydrateFromDisk(parsed)
@@ -393,10 +398,13 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
       const beforeHistoryLen = merged.history.length
       cachedConfig = applyHistoryRetention(merged)
       const expiredOnLoad = cachedConfig.history.length !== beforeHistoryLen
-      if ((hadLegacyPlaintext && canUseSafeStorage()) || expiredOnLoad) {
+      if (hadLegacyPlaintext || expiredOnLoad) {
         try {
           writeAtomic(configPath, cachedConfig, cachedConfig.openai.apiKey.trim())
         } catch (migrateErr) {
+          if (hadLegacyPlaintext) {
+            plaintextRemainOnDisk = true
+          }
           logWarn(
             `Failed to rewrite migrated/pruned config on load: ${migrateErr instanceof Error ? migrateErr.message : String(migrateErr)}`
           )
@@ -412,6 +420,7 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
       }
       preservedEncryptedKey = ''
       decryptFailedOnLoad = false
+      plaintextRemainOnDisk = false
       apiKeyPersistence = 'empty'
       cachedConfig = mergeConfig(null)
     }
@@ -483,6 +492,10 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
     return decryptFailedOnLoad && preservedEncryptedKey !== ''
   }
 
+  function hasPlaintextOnDiskRisk(): boolean {
+    return plaintextRemainOnDisk
+  }
+
   return {
     hasSavedConfigFile,
     load,
@@ -495,7 +508,8 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
     clearCleanExit,
     getCachedApiKey,
     getApiKeyPersistence,
-    hasUnreadableEncryptedKey
+    hasUnreadableEncryptedKey,
+    hasPlaintextOnDiskRisk
   }
 }
 
@@ -523,5 +537,6 @@ export const configStore: Omit<ConfigStoreInstance, 'getCleanExitFlagPath'> = {
   clearCleanExit: () => getActiveStore().clearCleanExit(),
   getCachedApiKey: () => getActiveStore().getCachedApiKey(),
   getApiKeyPersistence: () => getActiveStore().getApiKeyPersistence(),
-  hasUnreadableEncryptedKey: () => getActiveStore().hasUnreadableEncryptedKey()
+  hasUnreadableEncryptedKey: () => getActiveStore().hasUnreadableEncryptedKey(),
+  hasPlaintextOnDiskRisk: () => getActiveStore().hasPlaintextOnDiskRisk?.() ?? false
 }

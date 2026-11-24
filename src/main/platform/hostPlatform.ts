@@ -19,7 +19,10 @@ import {
   sendMacCopyShortcut,
   sendMacPasteShortcut
 } from './macInput'
-import { shutdownWin32UiaWorker } from './win32Uia'
+import {
+  setWin32UiaWorkerScriptPath as setWin32UiaWorkerScriptPathImpl,
+  shutdownWin32UiaWorker
+} from './win32Uia'
 import {
   classifyWindowContext as win32ClassifyWindowContext,
   classifyWindowKind as win32ClassifyWindowKind,
@@ -341,6 +344,12 @@ export async function getTargetWindowClassification(
     return win32ClassifyWindowContext(handle, customSets?.extraWt, customSets?.extraConhost)
   }
   return { inputKind: getTargetInputKind(handle, customSets) }
+}
+
+export function setWin32UiaWorkerScriptPath(workerPath: string | null): void {
+  if (process.platform === 'win32') {
+    setWin32UiaWorkerScriptPathImpl(workerPath)
+  }
 }
 
 export async function shutdownPlatformWorkers(): Promise<void> {

@@ -411,4 +411,121 @@ describe('Batch 2 security & privacy (ALT-03 / ALT-04 / ALT-05)', () => {
     assert.equal(rawBasic.openai.apiKey, '')
     assert.equal(rawBasic.openai.encryptedKey, undefined)
   })
+
+  it('T08b (P2): immediately scrubs legacy plaintext apiKey on load across safeStorage unavailable, encrypt error, ciphertext preservation, and read-only failures', () => {
+    // 1) Legacy plaintext + safeStorage unavailable -> keeps key in RAM only and scrubs disk immediately
+    const dirUnavail = makeTempDir()
+    const fileUnavail = path.join(dirUnavail, 'config.json')
+    fs.writeFileSync(fileUnavail, JSON.stringify({ openai: { apiKey: 'sk-legacy-unavail' } }), 'utf8')
+    const storeUnavail = createConfigStore({
+      getUserDataDir: () => dirUnavail,
+      safeStorage: {
+        isEncryptionAvailable: () => false,
+        encryptString: (s) => Buffer.from(`enc:${s}`, 'utf8'),
+        decryptString: (b) => b.toString('utf8').replace(/^enc:/, '')
+      }
+    })
+    const loadedUnavail = storeUnavail.load()
+    assert.equal(loadedUnavail.openai.apiKey, 'sk-legacy-unavail')
+    assert.equal(storeUnavail.getApiKeyPersistence(), 'memory-only')
+    assert.equal(storeUnavail.hasPlaintextOnDiskRisk?.(), false)
+    const diskUnavail = JSON.parse(fs.readFileSync(fileUnavail, 'utf8')) as {
+      openai: { apiKey: string; encryptedKey?: string }
+    }
+    assert.equal(diskUnavail.openai.apiKey, '')
+    assert.equal(diskUnavail.openai.encryptedKey, undefined)
+
+    // 2) Legacy plaintext + pre-existing encryptedKey + safeStorage unavailable -> scrubs plaintext while preserving ciphertext
+    const dirBoth = makeTempDir()
+    const fileBoth = path.join(dirBoth, 'config.json')
+    const oldCipher = Buffer.from('enc:sk-legacy-both', 'utf8').toString('base64')
+    fs.writeFileSync(
+      fileBoth,
+      JSON.stringify({ openai: { apiKey: 'sk-legacy-both', encryptedKey: oldCipher } }),
+      'utf8'
+    )
+    const storeBoth = createConfigStore({
+      getUserDataDir: () => dirBoth,
+      safeStorage: {
+        isEncryptionAvailable: () => false,
+        encryptString: (s) => Buffer.from(`enc:${s}`, 'utf8'),
+        decryptString: (b) => b.toString('utf8').replace(/^enc:/, '')
+      }
+    })
+    const loadedBoth = storeBoth.load()
+    assert.equal(loadedBoth.openai.apiKey, 'sk-legacy-both')
+    const diskBoth = JSON.parse(fs.readFileSync(fileBoth, 'utf8')) as {
+      openai: { apiKey: string; encryptedKey?: string }
+    }
+    assert.equal(diskBoth.openai.apiKey, '')
+    assert.equal(diskBoth.openai.encryptedKey, oldCipher)
+
+    // 3) Legacy plaintext + encryptString throws -> still scrubs plaintext on load (memory-only)
+    const dirThrow = makeTempDir()
+    const fileThrow = path.join(dirThrow, 'config.json')
+    fs.writeFileSync(fileThrow, JSON.stringify({ openai: { apiKey: 'sk-legacy-throw' } }), 'utf8')
+    const storeThrow = createConfigStore({
+      getUserDataDir: () => dirThrow,
+      safeStorage: {
+        isEncryptionAvailable: () => true,
+        encryptString: () => {
+          throw new Error('DPAPI encrypt failed')
+        },
+        decryptString: (b) => b.toString('utf8')
+      }
+    })
+    const loadedThrow = storeThrow.load()
+    assert.equal(loadedThrow.openai.apiKey, 'sk-legacy-throw')
+    assert.equal(storeThrow.getApiKeyPersistence(), 'memory-only')
+    const diskThrow = JSON.parse(fs.readFileSync(fileThrow, 'utf8')) as {
+      openai: { apiKey: string; encryptedKey?: string }
+    }
+    assert.equal(diskThrow.openai.apiKey, '')
+    assert.equal(diskThrow.openai.encryptedKey, undefined)
+
+    // 4) Legacy plaintext + safeStorage available -> encrypts cleanly on load and removes plaintext
+    const dirAvail = makeTempDir()
+    const fileAvail = path.join(dirAvail, 'config.json')
+    fs.writeFileSync(fileAvail, JSON.stringify({ openai: { apiKey: 'sk-legacy-ok' } }), 'utf8')
+    const storeAvail = createConfigStore({
+      getUserDataDir: () => dirAvail,
+      safeStorage: {
+        isEncryptionAvailable: () => true,
+        encryptString: (s) => Buffer.from(`enc:${s}`, 'utf8'),
+        decryptString: (b) => b.toString('utf8').replace(/^enc:/, '')
+      }
+    })
+    const loadedAvail = storeAvail.load()
+    assert.equal(loadedAvail.openai.apiKey, 'sk-legacy-ok')
+    assert.equal(storeAvail.getApiKeyPersistence(), 'encrypted')
+    const diskAvail = JSON.parse(fs.readFileSync(fileAvail, 'utf8')) as {
+      openai: { apiKey: string; encryptedKey?: string }
+    }
+    assert.equal(diskAvail.openai.apiKey, '')
+    assert.ok(diskAvail.openai.encryptedKey)
+
+    // 5) Read-only write failure during load migration flags plaintext-on-disk risk cleanly
+    const dirRo = makeTempDir()
+    const fileRo = path.join(dirRo, 'config.json')
+    fs.writeFileSync(fileRo, JSON.stringify({ openai: { apiKey: 'sk-legacy-ro' } }), 'utf8')
+    const storeRo = createConfigStore({
+      getUserDataDir: () => dirRo,
+      fs: {
+        ...fs,
+        writeFileSync: () => {
+          const err = new Error('EACCES read-only') as NodeJS.ErrnoException
+          err.code = 'EACCES'
+          throw err
+        }
+      },
+      safeStorage: {
+        isEncryptionAvailable: () => false,
+        encryptString: () => Buffer.alloc(0),
+        decryptString: () => ''
+      }
+    })
+    const loadedRo = storeRo.load()
+    assert.equal(loadedRo.openai.apiKey, 'sk-legacy-ro')
+    assert.equal(storeRo.hasPlaintextOnDiskRisk?.(), true)
+  })
 })

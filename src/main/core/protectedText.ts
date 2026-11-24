@@ -475,7 +475,9 @@ export function restoreAndVerifyProtectedText(
   const unexpectedTokens: string[] = []
 
   const escapedPrefix = escapeRegExp(state.prefix)
-  const exactTokenRe = new RegExp(`\\[\\[${escapedPrefix}_(\\d+)\\]\\]`, 'g')
+  const canonicalIdPattern = '(?:0|[1-9]\\d*)'
+  const exactTokenRe = new RegExp(`\\[\\[${escapedPrefix}_(${canonicalIdPattern})\\]\\]`, 'g')
+  const canonicalExactFullRe = new RegExp(`^\\[\\[${escapedPrefix}_${canonicalIdPattern}\\]\\]$`)
   const residualCheckText = translated.replace(exactTokenRe, ' ')
 
   let text = translated.replace(exactTokenRe, (fullMatch, idStr: string) => {
@@ -490,29 +492,30 @@ export function restoreAndVerifyProtectedText(
     return span.value
   })
 
-  // Best-effort lenient restore for minor whitespace / full-width corruption in preview,
+  // Best-effort lenient restore for minor whitespace, leading-zero, or full-width corruption in preview,
   // while still marking `corruptedDetected` so strict safety check holds auto-paste.
   const fuzzyTokenRe = new RegExp(
     `(?:\\[\\[|［［|【【|\\[)\\s*${escapedPrefix}\\s*[_\\-]?\\s*(\\d+)\\s*(?:\\]\\]|］］|】】|\\])`,
     'gi'
   )
   let corruptedDetected = false
-  let cleanedResidual = residualCheckText
-  if (counts.size < state.spans.length || unexpectedTokens.length === 0) {
-    text = text.replace(fuzzyTokenRe, (fullMatch, idStr: string) => {
-      corruptedDetected = true
-      const id = Number.parseInt(idStr, 10)
-      const span = spanById.get(id)
-      if (!span) {
-        unexpectedTokens.push(fullMatch)
-        return fullMatch
-      }
-      counts.set(id, (counts.get(id) ?? 0) + 1)
-      observedOrder.push(id)
-      return span.value
-    })
-    cleanedResidual = residualCheckText.replace(fuzzyTokenRe, ' ')
-  }
+  text = text.replace(fuzzyTokenRe, (fullMatch, idStr: string) => {
+    if (canonicalExactFullRe.test(fullMatch)) {
+      // Exact-format out-of-range tokens (e.g. [[ALTT_999]]) are already tracked in `unexpectedTokens`
+      return fullMatch
+    }
+    corruptedDetected = true
+    const id = Number.parseInt(idStr, 10)
+    const span = spanById.get(id)
+    if (!span) {
+      unexpectedTokens.push(fullMatch)
+      return fullMatch
+    }
+    counts.set(id, (counts.get(id) ?? 0) + 1)
+    observedOrder.push(id)
+    return span.value
+  })
+  const cleanedResidual = residualCheckText.replace(fuzzyTokenRe, ' ')
 
   // Detect leftover corrupted prefix/bracket fragments outside valid tokens (in untranslated gaps only)
   const leftoverPrefixRe = new RegExp(

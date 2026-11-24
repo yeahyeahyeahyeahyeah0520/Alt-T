@@ -90,6 +90,47 @@ describe('Batch 3 protected text, popup modes, and per-app overrides (ALT-07..AL
     assert.equal(mangled.ok, false)
     assert.equal(mangled.reason, 'placeholder-corrupted')
 
+    // P3: Leading-zero placeholder variants ([[ALTT_00]], [[ALTT_01]], mixed valid+leading-zero, mixed+unknown) fail strict check as corrupted while restoring preview cleanly
+    const zeroSingle = protectTechnicalText('Use --check')
+    const leadingZero00 = restoreAndVerifyProtectedText(
+      zeroSingle.maskedText.replace('_0]]', '_00]]'),
+      zeroSingle
+    )
+    assert.equal(leadingZero00.ok, false)
+    assert.equal(leadingZero00.reason, 'placeholder-corrupted')
+    assert.equal(leadingZero00.text, 'Use --check')
+
+    const twoSpans = protectTechnicalText('Run --check and https://example.com')
+    const leadingZero01 = restoreAndVerifyProtectedText(
+      twoSpans.maskedText.replace('_1]]', '_01]]'),
+      twoSpans
+    )
+    assert.equal(leadingZero01.ok, false)
+    assert.equal(leadingZero01.reason, 'placeholder-corrupted')
+
+    const validPlusLeadingZero = restoreAndVerifyProtectedText(
+      `${zeroSingle.spans[0].token} and ${zeroSingle.spans[0].token.replace('_0]]', '_00]]')}`,
+      zeroSingle
+    )
+    assert.equal(validPlusLeadingZero.ok, false)
+    assert.equal(validPlusLeadingZero.reason, 'placeholder-corrupted')
+    assert.equal(validPlusLeadingZero.text, 'Use --check and --check'.replace(/^Use /, ''))
+
+    const validUnknownPlusLeadingZero = restoreAndVerifyProtectedText(
+      `${zeroSingle.spans[0].token} [[${zeroSingle.prefix}_999]] ${zeroSingle.spans[0].token.replace('_0]]', '_00]]')}`,
+      zeroSingle
+    )
+    assert.equal(validUnknownPlusLeadingZero.ok, false)
+    assert.equal(validUnknownPlusLeadingZero.reason, 'placeholder-corrupted')
+    assert.deepEqual(validUnknownPlusLeadingZero.unexpectedTokens, [`[[${zeroSingle.prefix}_999]]`])
+
+    // Canonical invented token + missing canonical token keeps exact reason 'placeholder-invented' (not corrupted)
+    const pureInvented = restoreAndVerifyProtectedText(`[[${zeroSingle.prefix}_999]]`, zeroSingle)
+    assert.equal(pureInvented.ok, false)
+    assert.equal(pureInvented.reason, 'placeholder-invented')
+    assert.deepEqual(pureInvented.unexpectedTokens, [`[[${zeroSingle.prefix}_999]]`])
+    assert.deepEqual(pureInvented.missingTokens, [zeroSingle.spans[0].token])
+
     // Normal English prose containing "at" does NOT false-positive when Chinese source uses default prefix ALTT
     const zhSource = protectTechnicalText('请检查 `npm test` 输出')
     assert.equal(zhSource.prefix, 'ALTT')

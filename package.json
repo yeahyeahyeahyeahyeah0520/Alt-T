@@ -39,7 +39,8 @@
     "check": "node scripts/check-rules.mjs",
     "test": "node --import tsx --test \"tests/**/*.test.ts\"",
     "smoke": "node scripts/smoke-launch.mjs",
-    "verify": "npm run typecheck && npm run check && npm test && electron-vite build && npm run smoke",
+    "smoke:uia": "node scripts/smoke-uia-build.mjs",
+    "verify": "npm run typecheck && npm run check && npm test && electron-vite build && npm run smoke:uia && npm run smoke",
     "dist:win": "npm run build && electron-builder --win nsis portable --publish never"
   },
   "dependencies": {
@@ -63,6 +64,9 @@
     "appId": "com.alt-t.app",
     "productName": "Alt-T",
     "asar": true,
+    "asarUnpack": [
+      "out/main/**/*"
+    ],
     "compression": "maximum",
     "electronLanguages": [
       "en-US",
