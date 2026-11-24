@@ -1,5 +1,8 @@
-import { fetch, ProxyAgent, type Dispatcher, type Response } from 'undici'
+import dns from 'node:dns'
+import { Agent, fetch, ProxyAgent, type Dispatcher, type Response } from 'undici'
+import { MSG } from '../../shared/messages'
 import { ProviderError, type ProviderId, type ProxyConfig } from '../../shared/types'
+import { isLoopbackBaseUrl, isLoopbackIp } from '../core/baseUrl'
 import { redactSecretsInText } from '../core/redact'
 
 export class TimeoutMarker extends Error {
@@ -18,6 +21,7 @@ export class AbortMarker extends Error {
 
 export interface HttpDeps {
   getProxy: () => ProxyConfig
+  isLocalOnly?: () => boolean
 }
 
 export interface HttpRequestInit {
@@ -119,6 +123,7 @@ export function sanitizeHttpErrorSnippet(bodyText: string, secret?: string): str
 export function createHttp(deps: HttpDeps): HttpClient {
   let cachedProxyUrl = ''
   let cachedAgent: ProxyAgent | null = null
+  let localOnlyAgent: Agent | null = null
 
   function closeCachedAgent(): void {
     if (cachedAgent) {
@@ -129,7 +134,48 @@ export function createHttp(deps: HttpDeps): HttpClient {
     }
   }
 
+  function getOrCreateLocalOnlyAgent(): Agent {
+    if (localOnlyAgent) return localOnlyAgent
+    localOnlyAgent = new Agent({
+      connect: {
+        lookup: (hostname, options, callback) => {
+          dns.lookup(hostname, { ...options, all: true }, (err, addresses) => {
+            if (err) {
+              callback(err, '', 4)
+              return
+            }
+            const list = Array.isArray(addresses) ? addresses : []
+            if (list.length === 0) {
+              callback(new Error('LOCAL_ONLY_DNS_EMPTY'), '', 4)
+              return
+            }
+            const nonLoopback = list.find((entry) => !isLoopbackIp(entry.address))
+            if (nonLoopback) {
+              callback(new Error(`LOCAL_ONLY_DNS_BLOCKED:${nonLoopback.address}`), '', 4)
+              return
+            }
+            if ((options as { all?: boolean })?.all) {
+              ;(
+                callback as unknown as (
+                  err: NodeJS.ErrnoException | null,
+                  addrs: dns.LookupAddress[]
+                ) => void
+              )(null, list)
+              return
+            }
+            callback(null, list[0].address, list[0].family)
+          })
+        }
+      }
+    })
+    return localOnlyAgent
+  }
+
   function resolveDispatcher(provider: ProviderId = 'openai'): Dispatcher | undefined {
+    if (deps.isLocalOnly?.()) {
+      closeCachedAgent()
+      return getOrCreateLocalOnlyAgent()
+    }
     const proxy = deps.getProxy()
     const rawUrl = proxy.url.trim()
     if (!proxy.enabled || rawUrl === '') {
@@ -169,18 +215,47 @@ export function createHttp(deps: HttpDeps): HttpClient {
   }
 
   async function request(url: string, init: HttpRequestInit): Promise<Response> {
-    const dispatcher = resolveDispatcher(init.provider)
-    return fetch(url, {
+    const localOnly = Boolean(deps.isLocalOnly?.())
+    const providerId: ProviderId = init.provider ?? 'openai'
+    if (localOnly && !isLoopbackBaseUrl(url)) {
+      throw new ProviderError({
+        code: 'LOCAL_ONLY_BLOCKED',
+        provider: providerId,
+        message: MSG.LOCAL_ONLY_NON_LOOPBACK_BLOCKED,
+        retryable: false
+      })
+    }
+    const dispatcher = resolveDispatcher(providerId)
+    const res = await fetch(url, {
       method: init.method,
       headers: init.headers,
       body: init.body,
+      redirect: localOnly ? 'manual' : 'follow',
       dispatcher,
       signal: init.signal
     })
+    if (
+      localOnly &&
+      (res.type === 'opaqueredirect' || res.status === 0 || (res.status >= 300 && res.status < 400))
+    ) {
+      void res.body?.cancel().catch(() => {})
+      throw new ProviderError({
+        code: 'LOCAL_ONLY_BLOCKED',
+        provider: providerId,
+        message: MSG.LOCAL_ONLY_REDIRECT_BLOCKED,
+        retryable: false
+      })
+    }
+    return res
   }
 
   function dispose(): void {
     closeCachedAgent()
+    if (localOnlyAgent) {
+      const prevLocal = localOnlyAgent
+      localOnlyAgent = null
+      void prevLocal.close().catch(() => {})
+    }
   }
 
   return { request, dispose }

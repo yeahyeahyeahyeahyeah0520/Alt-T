@@ -12,6 +12,7 @@ import {
   IPC_CHANNELS,
   MAX_TRANSLATE_CHARS,
   ProviderError,
+  type ApiKeyPersistence,
   type AppConfig,
   type ConfigSetReply,
   type HistoryItem,
@@ -30,6 +31,7 @@ import {
 } from '../shared/types'
 import { testProviderDraft } from './providers/providerTest'
 import type { TranslateService } from './services/translateService'
+import type { ConfigStoreSetOptions } from './services/configStore'
 import type { PopupWindowController } from './windows/popupWindow'
 
 const MAX_IPC_TEXT_LENGTH = 50000
@@ -37,9 +39,11 @@ const MAX_IPC_TEXT_LENGTH = 50000
 export interface IpcDeps {
   configStore: {
     get: () => AppConfig
-    set: (next: unknown) => AppConfig
+    set: (next: unknown, opts?: ConfigStoreSetOptions) => AppConfig
     addHistory: (item: HistoryItem) => AppConfig | null | void
     clearHistory: () => AppConfig | void
+    getApiKeyPersistence?: () => ApiKeyPersistence
+    hasUnreadableEncryptedKey?: () => boolean
   }
   translateService: TranslateService
   hotkeyService: {
@@ -196,7 +200,8 @@ export function registerIpc(deps: IpcDeps): void {
       throw badArgsError(IPC_CHANNELS.configSet)
     }
     const prev = deps.configStore.get()
-    const saved = deps.configStore.set(raw.config)
+    const clearStoredEncryptedKey = raw.clearStoredEncryptedKey === true
+    const saved = deps.configStore.set(raw.config, { clearStoredEncryptedKey })
 
     const hotkeysChanged = HOTKEY_KEYS.some((k) => prev.hotkeys[k] !== saved.hotkeys[k])
     const needsHotkeyRegister = hotkeysChanged || !deps.hotkeyService.verifyHotkeys().ok
@@ -212,7 +217,15 @@ export function registerIpc(deps: IpcDeps): void {
       deps.tray.rebuildMenu()
     }
     broadcastConfigChanged(saved)
-    return { ok: true, hotkeyConflicts }
+    const apiKeyPersistence = deps.configStore.getApiKeyPersistence?.()
+    return {
+      ok: true,
+      hotkeyConflicts,
+      ...(apiKeyPersistence ? { apiKeyPersistence } : {}),
+      ...(apiKeyPersistence === 'memory-only' && saved.openai.apiKey.trim() !== ''
+        ? { storageWarning: MSG.API_KEY_MEMORY_ONLY_WARNING }
+        : {})
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.historyClear, (event) => {
@@ -281,7 +294,9 @@ export function registerIpc(deps: IpcDeps): void {
     IPC_CHANNELS.providerTest,
     async (event, raw: unknown): Promise<ProviderTestReply> => {
       assertTrustedSender(event, IPC_CHANNELS.providerTest)
-      return await testProviderDraft(raw)
+      return await testProviderDraft(raw, {
+        defaultLocalOnlyMode: deps.configStore.get().localOnlyMode
+      })
     }
   )
 

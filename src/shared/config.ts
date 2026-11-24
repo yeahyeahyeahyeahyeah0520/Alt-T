@@ -410,6 +410,33 @@ export function findDuplicateHotkeys(
   }))
 }
 
+const MS_PER_DAY = 86_400_000
+
+export function shouldLogOriginalTextPreview(
+  cfg: Pick<AppConfig, 'localOnlyMode' | 'logOriginalTextPreview'>
+): boolean {
+  return Boolean(cfg.logOriginalTextPreview) && !cfg.localOnlyMode
+}
+
+export function pruneHistoryItems(
+  items: ReadonlyArray<HistoryItem>,
+  policy: Pick<AppConfig, 'historyEnabled' | 'historyLimit' | 'historyRetentionDays'>,
+  nowMs = Date.now()
+): HistoryItem[] {
+  if (!policy.historyEnabled || policy.historyLimit <= 0) {
+    return []
+  }
+  const days = Math.max(0, Math.round(policy.historyRetentionDays))
+  const cutoff = days > 0 ? nowMs - days * MS_PER_DAY : null
+  const filtered =
+    cutoff === null
+      ? items
+      : items.filter(
+          (item) => typeof item.at === 'number' && Number.isFinite(item.at) && item.at >= cutoff
+        )
+  return filtered.slice(0, policy.historyLimit)
+}
+
 export function mergeConfig(raw: unknown): AppConfig {
   if (!isRecord(raw)) {
     return {
@@ -431,6 +458,19 @@ export function mergeConfig(raw: unknown): AppConfig {
     typeof raw.historyLimit === 'number' && Number.isFinite(raw.historyLimit)
       ? clamp(Math.round(raw.historyLimit), 0, 1000)
       : DEFAULT_CONFIG.historyLimit
+  const historyRetentionDays =
+    typeof raw.historyRetentionDays === 'number' && Number.isFinite(raw.historyRetentionDays)
+      ? clamp(Math.round(raw.historyRetentionDays), 0, 365)
+      : DEFAULT_CONFIG.historyRetentionDays
+  const historyEnabled =
+    typeof raw.historyEnabled === 'boolean' ? raw.historyEnabled : DEFAULT_CONFIG.historyEnabled
+  const localOnlyMode =
+    typeof raw.localOnlyMode === 'boolean' ? raw.localOnlyMode : DEFAULT_CONFIG.localOnlyMode
+  const logOriginalTextPreview = localOnlyMode
+    ? false
+    : typeof raw.logOriginalTextPreview === 'boolean'
+      ? raw.logOriginalTextPreview
+      : DEFAULT_CONFIG.logOriginalTextPreview
 
   return {
     version: 1,
@@ -450,9 +490,11 @@ export function mergeConfig(raw: unknown): AppConfig {
     defaultTargetLang: isTargetLang(raw.defaultTargetLang)
       ? raw.defaultTargetLang
       : DEFAULT_CONFIG.defaultTargetLang,
-    historyEnabled:
-      typeof raw.historyEnabled === 'boolean' ? raw.historyEnabled : DEFAULT_CONFIG.historyEnabled,
+    historyEnabled,
     historyLimit,
+    historyRetentionDays,
+    localOnlyMode,
+    logOriginalTextPreview,
     popupWidth:
       typeof raw.popupWidth === 'number' && Number.isFinite(raw.popupWidth)
         ? clamp(Math.round(raw.popupWidth), 360, 4000)
@@ -464,6 +506,6 @@ export function mergeConfig(raw: unknown): AppConfig {
     customWtExeNames: mergeExeNameList(raw.customWtExeNames),
     customConhostExeNames: mergeExeNameList(raw.customConhostExeNames),
     forcePopupOnReplaceExes: mergeExeNameList(raw.forcePopupOnReplaceExes),
-    history: mergeHistory(raw.history, historyLimit)
+    history: historyEnabled ? mergeHistory(raw.history, historyLimit) : []
   }
 }

@@ -62,6 +62,9 @@ export interface AppConfig {
   defaultTargetLang: TargetLang
   historyEnabled: boolean
   historyLimit: number
+  historyRetentionDays: number
+  localOnlyMode: boolean
+  logOriginalTextPreview: boolean
   popupWidth: number
   popupHeight: number
   /** 用户自定义追加到 wt 类终端的 exe 文件名列表（小写，含 .exe），默认 [] */
@@ -115,6 +118,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   defaultTargetLang: 'zh-Hans',
   historyEnabled: true,
   historyLimit: 200,
+  historyRetentionDays: 30,
+  localOnlyMode: false,
+  logOriginalTextPreview: false,
   popupWidth: 460,
   popupHeight: 320,
   customWtExeNames: [],
@@ -136,6 +142,7 @@ export interface TranslateRequest {
 }
 
 export type TranslateErrorCode =
+  | 'LOCAL_ONLY_BLOCKED'
   | 'CONFIG'
   | 'TIMEOUT'
   | 'NETWORK'
@@ -212,9 +219,14 @@ export interface TranslateStartReply {
 
 export interface ConfigSetArgs {
   config: AppConfig
+  clearStoredEncryptedKey?: boolean
 }
 
+export type ApiKeyPersistence = 'encrypted' | 'memory-only' | 'empty'
+
 export interface ConfigSetReply {
+  apiKeyPersistence?: ApiKeyPersistence
+  storageWarning?: string
   ok: boolean
   hotkeyConflicts: Array<{ key: keyof HotkeyConfig; accelerator: string }>
 }
@@ -254,6 +266,7 @@ export interface HotkeyCheckReply {
 }
 
 export interface ProviderTestArgs {
+  localOnlyMode?: boolean
   provider: ProviderId
   openai: OpenAIProviderConfig
   proxy: ProxyConfig

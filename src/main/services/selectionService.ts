@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import { clipboard, Notification } from 'electron'
-import { createHistoryEntry } from '../../shared/config'
+import { createHistoryEntry, shouldLogOriginalTextPreview } from '../../shared/config'
 import { MSG } from '../../shared/messages'
 import {
   countTerminalEraseChars,
@@ -1243,7 +1243,12 @@ export async function runSelectionFlow(
 
     const text = capture.normalizedText
     const to = detectTargetLang(text)
-    logInfo(`selection captured: "${truncatePreview(text, 40)}" -> to=${to} kind=${capture.pasteKind}`)
+    const preview = shouldLogOriginalTextPreview(cfg) ? truncatePreview(text, 40) : ''
+    logInfo(
+      preview
+        ? `selection captured: "${preview}" -> to=${to} kind=${capture.pasteKind}`
+        : `selection captured: chars=${text.length} -> to=${to} kind=${capture.pasteKind}`
+    )
 
     if (mode === 'show') {
       watchdogOwnedByShow = true

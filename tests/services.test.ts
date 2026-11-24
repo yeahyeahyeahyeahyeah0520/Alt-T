@@ -103,7 +103,7 @@ describe('configStore', () => {
     store.set({ ...DEFAULT_CONFIG, historyEnabled: false })
     const item: HistoryItem = {
       id: 'h1',
-      at: 1,
+      at: Date.now(),
       from: 'a',
       to: 'b',
       provider: 'edge',

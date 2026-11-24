@@ -56,6 +56,13 @@ const hotkeyStatus = ref<Record<keyof HotkeyConfig, HotkeyStatusKind>>({
 
 const hotkeyConflicts = ref<Array<{ key: keyof HotkeyConfig; accelerator: string }>>([])
 const saveError = ref('')
+const saveNotice = ref('')
+const clearStoredKey = ref(false)
+
+function handleClearApiKey(): void {
+  form.value.openai.apiKey = ''
+  clearStoredKey.value = true
+}
 const saving = ref(false)
 const historyExpanded = ref(false)
 
@@ -149,6 +156,15 @@ function handleApplyPreset(): void {
   if (!preset) return
   form.value.openai.baseUrl = preset.baseUrl
   form.value.openai.model = preset.model
+  const isLoopbackPreset =
+    preset.id === 'ollama' ||
+    /^https?:\/\/(?:localhost|127\.|\[::1\])/i.test(preset.baseUrl.trim())
+  if (isLoopbackPreset) {
+    form.value.localOnlyMode = true
+    form.value.primaryProvider = 'openai'
+    form.value.enableFallback = false
+    form.value.logOriginalTextPreview = false
+  }
   providerTestResult.value = null
 }
 
@@ -170,7 +186,8 @@ async function handleTestProvider(target?: ProviderId): Promise<void> {
         ...form.value.openai,
         temperature
       },
-      proxy: { ...form.value.proxy }
+      proxy: { ...form.value.proxy },
+      localOnlyMode: form.value.localOnlyMode
     })
   } catch (err) {
     providerTestResult.value = {
@@ -203,6 +220,7 @@ async function handleSave(): Promise<void> {
   saving.value = true
   hotkeyConflicts.value = []
   saveError.value = ''
+  saveNotice.value = ''
 
   try {
     const temperature = parseFiniteClamp(
@@ -213,6 +231,14 @@ async function handleSave(): Promise<void> {
     )
     const historyLimit = Math.round(
       parseFiniteClamp(form.value.historyLimit, 0, 1000, DEFAULT_CONFIG.historyLimit)
+    )
+    const historyRetentionDays = Math.round(
+      parseFiniteClamp(
+        form.value.historyRetentionDays,
+        0,
+        365,
+        DEFAULT_CONFIG.historyRetentionDays
+      )
     )
 
     const invalidHotkeys = HOTKEY_FIELDS.filter(
@@ -243,6 +269,10 @@ async function handleSave(): Promise<void> {
         temperature
       },
       historyLimit,
+      historyRetentionDays,
+      logOriginalTextPreview: form.value.localOnlyMode
+        ? false
+        : form.value.logOriginalTextPreview,
       popupWidth: latestPopupWidth.value,
       popupHeight: latestPopupHeight.value,
       customWtExeNames: parseExeNameList(customWtInput.value),
@@ -251,7 +281,13 @@ async function handleSave(): Promise<void> {
       history: historyItems.value
     })
 
-    const reply = await window.api.configSet({ config: payload })
+    const reply = await window.api.configSet({
+      config: payload,
+      ...(clearStoredKey.value && payload.openai.apiKey.trim() === ''
+        ? { clearStoredEncryptedKey: true }
+        : {})
+    })
+    clearStoredKey.value = false
     if (reply.hotkeyConflicts.length > 0) {
       hotkeyConflicts.value = reply.hotkeyConflicts
       window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -259,6 +295,11 @@ async function handleSave(): Promise<void> {
     }
     if (!reply.ok) {
       saveError.value = '保存配置失败，请检查输入项后重试。'
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
+    if (reply.storageWarning) {
+      saveNotice.value = `${reply.storageWarning}（其余配置已保存；若需关闭窗口请点击“取消”）`
       window.scrollTo({ top: 0, behavior: 'smooth' })
       return
     }
@@ -322,6 +363,7 @@ onUnmounted(() => {
       </div>
       <div v-if="saveError">{{ saveError }}</div>
     </div>
+    <div v-if="saveNotice" class="alert-warn">{{ saveNotice }}</div>
 
     <div class="sections">
       <section class="group">
@@ -440,12 +482,22 @@ onUnmounted(() => {
         </div>
         <div class="row">
           <label class="label" for="openai-api-key">API Key</label>
-          <input
-            id="openai-api-key"
-            v-model="form.openai.apiKey"
-            type="password"
-            autocomplete="off"
-          />
+          <div class="inline-actions">
+            <input
+              id="openai-api-key"
+              v-model="form.openai.apiKey"
+              type="password"
+              autocomplete="off"
+              @input="clearStoredKey = false"
+            />
+            <button
+              type="button"
+              title="清除内存和磁盘中保存的 API Key"
+              @click="handleClearApiKey"
+            >
+              清除密钥
+            </button>
+          </div>
         </div>
         <div class="row">
           <label class="label" for="openai-model">模型</label>
@@ -618,11 +670,49 @@ onUnmounted(() => {
           </select>
         </div>
         <div class="row">
+          <span class="label">严格本地模式</span>
+          <div class="stack-cell">
+            <label class="checkbox-label">
+              <input
+                v-model="form.localOnlyMode"
+                type="checkbox"
+                @change="form.localOnlyMode && (form.logOriginalTextPreview = false)"
+              />
+              严格仅本地翻译（仅允许本机回环地址，禁止外网回退、HTTP 重定向与代理）
+            </label>
+          </div>
+        </div>
+        <div class="row">
+          <span class="label">日志隐私</span>
+          <label class="checkbox-label">
+            <input
+              v-model="form.logOriginalTextPreview"
+              type="checkbox"
+              :disabled="form.localOnlyMode"
+            />
+            允许在调试日志中记录截断原文预览（默认关闭，仅本地模式下强制禁用）
+          </label>
+        </div>
+        <div class="row">
           <span class="label">记录历史</span>
           <label class="checkbox-label">
             <input v-model="form.historyEnabled" type="checkbox" />
             保存翻译历史记录
           </label>
+        </div>
+        <div class="row">
+          <label class="label" for="history-retention-days">保留天数</label>
+          <div class="stack-cell">
+            <input
+              id="history-retention-days"
+              v-model.number="form.historyRetentionDays"
+              type="number"
+              min="0"
+              max="365"
+              step="1"
+            />
+            <span class="hint">0 = 仅当前会话保留（不写入磁盘）；大于 0 按天数自动清理过期记录（默认 30 天）</span>
+          </div>
         </div>
         <div class="row">
           <label class="label" for="history-limit">历史上限</label>
@@ -692,6 +782,15 @@ onUnmounted(() => {
   border-radius: 6px;
   background: var(--danger-bg);
   color: var(--danger);
+  font-size: 13px;
+}
+
+.alert-warn {
+  padding: 8px 12px;
+  border: 1px solid #d97706;
+  border-radius: 6px;
+  background: rgba(217, 119, 6, 0.12);
+  color: #b45309;
   font-size: 13px;
 }
 

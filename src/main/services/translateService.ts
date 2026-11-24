@@ -1,3 +1,4 @@
+import { shouldLogOriginalTextPreview } from '../../shared/config'
 import { truncatePreview } from '../../shared/text'
 import {
   ProviderError,
@@ -35,7 +36,10 @@ export interface TranslateService {
 }
 
 export function createTranslateService(deps: { getConfig: () => AppConfig }): TranslateService {
-  const http = createHttp({ getProxy: () => deps.getConfig().proxy })
+  const http = createHttp({
+    getProxy: () => deps.getConfig().proxy,
+    isLocalOnly: () => deps.getConfig().localOnlyMode
+  })
   const providers: Record<ProviderId, TranslateProvider> = {
     openai: new OpenAICompatibleProvider(() => deps.getConfig().openai, http),
     edge: new EdgeDirectProvider(http)
@@ -56,8 +60,12 @@ export function createTranslateService(deps: { getConfig: () => AppConfig }): Tr
   ): Promise<TranslateResult> {
     const cfg = deps.getConfig()
     const primary = req.provider ?? cfg.primaryProvider
-    const preview = truncatePreview(req.text, 40)
-    logInfo(`translateOnce start provider=${primary} to=${req.to} text="${preview}"`)
+    const preview = shouldLogOriginalTextPreview(cfg) ? truncatePreview(req.text, 40) : ''
+    logInfo(
+      preview
+        ? `translateOnce start provider=${primary} to=${req.to} text="${preview}"`
+        : `translateOnce start provider=${primary} to=${req.to} chars=${req.text.length}`
+    )
 
     const linked = createLinkedAbort(signal)
     if (requestId) {
@@ -70,7 +78,9 @@ export function createTranslateService(deps: { getConfig: () => AppConfig }): Tr
         {
           providers,
           primary,
-          enableFallback: cfg.enableFallback
+          enableFallback: cfg.enableFallback,
+          localOnlyMode: cfg.localOnlyMode,
+          openaiBaseUrl: cfg.openai.baseUrl
         },
         toProviderRequest(req),
         { stream: false },
@@ -105,16 +115,20 @@ export function createTranslateService(deps: { getConfig: () => AppConfig }): Tr
 
     const cfg = deps.getConfig()
     const primary = req.provider ?? cfg.primaryProvider
-    const preview = truncatePreview(req.text, 40)
+    const preview = shouldLogOriginalTextPreview(cfg) ? truncatePreview(req.text, 40) : ''
     logInfo(
-      `translateStream start id=${requestId} provider=${primary} to=${req.to} text="${preview}"`
+      preview
+        ? `translateStream start id=${requestId} provider=${primary} to=${req.to} text="${preview}"`
+        : `translateStream start id=${requestId} provider=${primary} to=${req.to} chars=${req.text.length}`
     )
 
     void translateWithFallback(
       {
         providers,
         primary,
-        enableFallback: cfg.enableFallback
+        enableFallback: cfg.enableFallback,
+        localOnlyMode: cfg.localOnlyMode,
+        openaiBaseUrl: cfg.openai.baseUrl
       },
       toProviderRequest(req),
       {

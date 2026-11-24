@@ -55,6 +55,14 @@ export const MSG = {
   PASTE_CANCELLED_TARGET_CHANGED: '目标窗口已切换或关闭，已取消自动粘贴并恢复原剪贴板',
   TARGET_CHANGED_AFTER_PARTIAL_DELETE:
     '目标窗口在删除原文本过程中发生变化，已中止后续粘贴，译文已保留在剪贴板',
+  LOCAL_ONLY_EXTERNAL_BLOCKED:
+    '严格仅本地模式已禁止访问外网翻译源，请关闭“仅本地模式”或改用本机回环服务',
+  LOCAL_ONLY_NON_LOOPBACK_BLOCKED:
+    '严格仅本地模式下仅允许本机回环地址（localhost / 127.0.0.1 / ::1）',
+  LOCAL_ONLY_REDIRECT_BLOCKED:
+    '严格仅本地模式已拦截 HTTP 重定向，防止文本被转发至外部地址',
+  API_KEY_MEMORY_ONLY_WARNING:
+    '系统密钥库不可用：API Key 仅保存在当前会话内存中，未向磁盘写入明文',
 
   // --- 动态格式消息 ---
   inputTooLong: (maxChars: number): string => `输入文本超过 ${maxChars} 字符上限`,

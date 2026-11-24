@@ -1,8 +1,8 @@
 import fs from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app, safeStorage } from 'electron'
-import { isRecord, mergeConfig } from '../../shared/config'
-import type { AppConfig, HistoryItem } from '../../shared/types'
+import { isRecord, mergeConfig, pruneHistoryItems } from '../../shared/config'
+import type { ApiKeyPersistence, AppConfig, HistoryItem } from '../../shared/types'
 import { logError, logWarn } from './logger'
 
 const CLEAN_EXIT_FLAG_NAME = 'clean-exit.flag'
@@ -19,21 +19,29 @@ export interface ConfigStoreDeps {
     isEncryptionAvailable: () => boolean
     encryptString: (plainText: string) => Buffer
     decryptString: (encrypted: Buffer) => string
+    getSelectedStorageBackend?: () => string
   }
   sleepSync: (ms: number) => void
+  now?: () => number
+}
+
+export interface ConfigStoreSetOptions {
+  clearStoredEncryptedKey?: boolean
 }
 
 export interface ConfigStoreInstance {
   hasSavedConfigFile: () => boolean
   load: () => AppConfig
   get: () => AppConfig
-  set: (next: unknown) => AppConfig
+  set: (next: unknown, opts?: ConfigStoreSetOptions) => AppConfig
   addHistory: (item: HistoryItem) => AppConfig | null
   clearHistory: () => AppConfig
   getCleanExitFlagPath: () => string
   markCleanExit: () => void
   clearCleanExit: () => void
   getCachedApiKey: () => string
+  getApiKeyPersistence: () => ApiKeyPersistence
+  hasUnreadableEncryptedKey: () => boolean
 }
 
 function defaultSleepSync(ms: number): void {
@@ -73,6 +81,22 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
 
   let cachedConfig: AppConfig | null = null
   let writeSeq = 0
+  let preservedEncryptedKey = ''
+  let decryptFailedOnLoad = false
+  let apiKeyPersistence: ApiKeyPersistence = 'empty'
+  const ephemeralHistoryIds = new Set<string>()
+
+  function nowMs(): number {
+    return typeof deps.now === 'function' ? deps.now() : Date.now()
+  }
+
+  function applyHistoryRetention(cfg: AppConfig): AppConfig {
+    const pruned = pruneHistoryItems(cfg.history, cfg, nowMs())
+    return {
+      ...cfg,
+      history: pruned
+    }
+  }
 
   function getConfigPath(): string {
     return join(deps.getUserDataDir(), 'config.json')
@@ -113,68 +137,205 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
 
   function canUseSafeStorage(): boolean {
     try {
-      return (
-        typeof deps.safeStorage?.isEncryptionAvailable === 'function' &&
-        deps.safeStorage.isEncryptionAvailable()
-      )
+      if (
+        typeof deps.safeStorage?.isEncryptionAvailable !== 'function' ||
+        !deps.safeStorage.isEncryptionAvailable()
+      ) {
+        return false
+      }
+      if (typeof deps.safeStorage.getSelectedStorageBackend === 'function') {
+        if (deps.safeStorage.getSelectedStorageBackend() === 'basic_text') {
+          return false
+        }
+      }
+      return true
     } catch {
       return false
     }
   }
 
-  function serializeForDisk(cfg: AppConfig): Record<string, unknown> {
-    const plain: Record<string, unknown> = {
-      ...cfg,
-      openai: { ...cfg.openai }
+  function serializeForDisk(
+    cfg: AppConfig,
+    previousSecret = '',
+    clearStoredEncryptedKey = false
+  ): {
+    payload: Record<string, unknown>
+    nextPreservedEncryptedKey: string
+    nextDecryptFailedOnLoad: boolean
+    nextPersistence: ApiKeyPersistence
+  } {
+    const secret = cfg.openai.apiKey.trim()
+    const diskHistory =
+      cfg.historyEnabled && cfg.historyLimit > 0 && cfg.historyRetentionDays > 0
+        ? cfg.history.filter((entry) => !ephemeralHistoryIds.has(entry.id))
+        : []
+    const diskOpenaiBase = {
+      ...cfg.openai,
+      apiKey: ''
     }
-    const secret = cfg.openai.apiKey
-    if (secret !== '' && canUseSafeStorage()) {
+
+    if (secret === '') {
+      if (!clearStoredEncryptedKey && decryptFailedOnLoad && preservedEncryptedKey !== '') {
+        return {
+          payload: {
+            ...cfg,
+            history: diskHistory,
+            openai: {
+              ...diskOpenaiBase,
+              encryptedKey: preservedEncryptedKey
+            }
+          },
+          nextPreservedEncryptedKey: preservedEncryptedKey,
+          nextDecryptFailedOnLoad: true,
+          nextPersistence: 'memory-only'
+        }
+      }
+      return {
+        payload: {
+          ...cfg,
+          history: diskHistory,
+          openai: diskOpenaiBase
+        },
+        nextPreservedEncryptedKey: '',
+        nextDecryptFailedOnLoad: false,
+        nextPersistence: 'empty'
+      }
+    }
+
+    if (canUseSafeStorage()) {
       try {
         const encryptedBase64 = deps.safeStorage.encryptString(secret).toString('base64')
-        plain.openai = {
-          ...cfg.openai,
-          apiKey: '',
-          encryptedKey: encryptedBase64
+        return {
+          payload: {
+            ...cfg,
+            history: diskHistory,
+            openai: {
+              ...diskOpenaiBase,
+              encryptedKey: encryptedBase64
+            }
+          },
+          nextPreservedEncryptedKey: encryptedBase64,
+          nextDecryptFailedOnLoad: false,
+          nextPersistence: 'encrypted'
         }
       } catch (err) {
         logWarn(
-          `DPAPI encryption unavailable, falling back to plain config: ${err instanceof Error ? err.message : String(err)}`
+          `safeStorage encryption failed; keeping API key in memory only without writing plaintext: ${err instanceof Error ? err.message : String(err)}`
         )
       }
+    } else {
+      logWarn('safeStorage unavailable; keeping API key in memory only without writing plaintext')
     }
-    return plain
+
+    // Encryption failed or is unavailable: NEVER write plaintext apiKey to disk.
+    // Preserve prior encryptedKey only if user is keeping the same decrypted secret.
+    if (
+      !clearStoredEncryptedKey &&
+      preservedEncryptedKey !== '' &&
+      previousSecret !== '' &&
+      secret === previousSecret
+    ) {
+      return {
+        payload: {
+          ...cfg,
+          history: diskHistory,
+          openai: {
+            ...diskOpenaiBase,
+            encryptedKey: preservedEncryptedKey
+          }
+        },
+        nextPreservedEncryptedKey: preservedEncryptedKey,
+        nextDecryptFailedOnLoad: false,
+        nextPersistence: 'memory-only'
+      }
+    }
+    return {
+      payload: {
+        ...cfg,
+        history: diskHistory,
+        openai: diskOpenaiBase
+      },
+      nextPreservedEncryptedKey: '',
+      nextDecryptFailedOnLoad: false,
+      nextPersistence: 'memory-only'
+    }
   }
 
-  function hydrateFromDisk(raw: unknown): unknown {
-    if (!isRecord(raw) || !isRecord(raw.openai)) return raw
+  function hydrateFromDisk(raw: unknown): {
+    hydrated: unknown
+    hadLegacyPlaintext: boolean
+  } {
+    if (!isRecord(raw) || !isRecord(raw.openai)) {
+      preservedEncryptedKey = ''
+      decryptFailedOnLoad = false
+      apiKeyPersistence = 'empty'
+      return { hydrated: raw, hadLegacyPlaintext: false }
+    }
     const openaiRaw = raw.openai
-    const hasPlain = typeof openaiRaw.apiKey === 'string' && openaiRaw.apiKey.trim() !== ''
+    const rawPlain = typeof openaiRaw.apiKey === 'string' ? openaiRaw.apiKey.trim() : ''
+    const hasPlain = rawPlain !== ''
     const encryptedBase64 =
       typeof openaiRaw.encryptedKey === 'string' ? openaiRaw.encryptedKey.trim() : ''
+    preservedEncryptedKey = encryptedBase64
 
-    if (!hasPlain && encryptedBase64 !== '' && canUseSafeStorage()) {
-      try {
-        const decrypted = deps.safeStorage.decryptString(Buffer.from(encryptedBase64, 'base64'))
-        return {
-          ...raw,
-          openai: {
-            ...openaiRaw,
-            apiKey: decrypted
-          }
-        }
-      } catch (err) {
-        logWarn(
-          `Failed to decrypt stored credential: ${err instanceof Error ? err.message : String(err)}`
-        )
-      }
+    if (hasPlain) {
+      decryptFailedOnLoad = false
+      apiKeyPersistence = 'memory-only'
+      return { hydrated: raw, hadLegacyPlaintext: true }
     }
-    return raw
+
+    if (encryptedBase64 !== '') {
+      if (canUseSafeStorage()) {
+        try {
+          const decrypted = deps.safeStorage.decryptString(Buffer.from(encryptedBase64, 'base64'))
+          decryptFailedOnLoad = false
+          apiKeyPersistence = 'encrypted'
+          return {
+            hydrated: {
+              ...raw,
+              openai: {
+                ...openaiRaw,
+                apiKey: decrypted
+              }
+            },
+            hadLegacyPlaintext: false
+          }
+        } catch (err) {
+          decryptFailedOnLoad = true
+          apiKeyPersistence = 'memory-only'
+          logWarn(
+            `Failed to decrypt stored credential (preserving ciphertext on disk): ${err instanceof Error ? err.message : String(err)}`
+          )
+        }
+      } else {
+        decryptFailedOnLoad = true
+        apiKeyPersistence = 'memory-only'
+        logWarn('safeStorage unavailable on load; preserving stored ciphertext on disk')
+      }
+      return { hydrated: raw, hadLegacyPlaintext: false }
+    }
+
+    decryptFailedOnLoad = false
+    apiKeyPersistence = 'empty'
+    return { hydrated: raw, hadLegacyPlaintext: false }
   }
 
-  function writeAtomic(filePath: string, cfg: AppConfig): void {
+  function writeAtomic(
+    filePath: string,
+    cfg: AppConfig,
+    previousSecret = '',
+    clearStoredEncryptedKey = false
+  ): void {
     deps.fs.mkdirSync(dirname(filePath), { recursive: true })
-    const payload = JSON.stringify(serializeForDisk(cfg), null, 2)
+    const serialized = serializeForDisk(cfg, previousSecret, clearStoredEncryptedKey)
+    const payload = JSON.stringify(serialized.payload, null, 2)
     const tmpPath = `${filePath}.${process.pid}.${++writeSeq}.tmp`
+
+    const commitCryptoState = (): void => {
+      preservedEncryptedKey = serialized.nextPreservedEncryptedKey
+      decryptFailedOnLoad = serialized.nextDecryptFailedOnLoad
+      apiKeyPersistence = serialized.nextPersistence
+    }
 
     deps.fs.writeFileSync(tmpPath, payload, 'utf8')
     try {
@@ -182,6 +343,7 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
       for (let attempt = 0; attempt <= RENAME_BACKOFF_MS.length; attempt++) {
         try {
           deps.fs.renameSync(tmpPath, filePath)
+          commitCryptoState()
           return
         } catch (err) {
           lastErr = err
@@ -197,6 +359,7 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
       // Fallback if Windows antivirus / indexer holds a transient share lock blocking MoveFileEx
       try {
         deps.fs.writeFileSync(filePath, payload, 'utf8')
+        commitCryptoState()
       } catch {
         throw lastErr
       }
@@ -213,7 +376,11 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
 
   function load(): AppConfig {
     const configPath = getConfigPath()
+    ephemeralHistoryIds.clear()
     if (!deps.fs.existsSync(configPath)) {
+      preservedEncryptedKey = ''
+      decryptFailedOnLoad = false
+      apiKeyPersistence = 'empty'
       cachedConfig = mergeConfig(null)
       return get()
     }
@@ -221,8 +388,20 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
     try {
       const rawText = deps.fs.readFileSync(configPath, 'utf8')
       const parsed: unknown = JSON.parse(rawText)
-      const hydrated = hydrateFromDisk(parsed)
-      cachedConfig = mergeConfig(hydrated)
+      const { hydrated, hadLegacyPlaintext } = hydrateFromDisk(parsed)
+      const merged = mergeConfig(hydrated)
+      const beforeHistoryLen = merged.history.length
+      cachedConfig = applyHistoryRetention(merged)
+      const expiredOnLoad = cachedConfig.history.length !== beforeHistoryLen
+      if ((hadLegacyPlaintext && canUseSafeStorage()) || expiredOnLoad) {
+        try {
+          writeAtomic(configPath, cachedConfig, cachedConfig.openai.apiKey.trim())
+        } catch (migrateErr) {
+          logWarn(
+            `Failed to rewrite migrated/pruned config on load: ${migrateErr instanceof Error ? migrateErr.message : String(migrateErr)}`
+          )
+        }
+      }
     } catch (err) {
       const bakPath = `${configPath}.bak-${Date.now()}`
       try {
@@ -231,6 +410,9 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
       } catch (renameErr) {
         logError('failed to backup corrupt config.json', renameErr ?? err)
       }
+      preservedEncryptedKey = ''
+      decryptFailedOnLoad = false
+      apiKeyPersistence = 'empty'
       cachedConfig = mergeConfig(null)
     }
     return get()
@@ -240,13 +422,15 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
     if (cachedConfig === null) {
       return load()
     }
+    cachedConfig = applyHistoryRetention(cachedConfig)
     return structuredClone(cachedConfig)
   }
 
-  function set(next: unknown): AppConfig {
-    const merged = mergeConfig(next)
+  function set(next: unknown, opts?: ConfigStoreSetOptions): AppConfig {
+    const previousSecret = cachedConfig?.openai.apiKey.trim() ?? ''
+    const merged = applyHistoryRetention(mergeConfig(next))
     const configPath = getConfigPath()
-    writeAtomic(configPath, merged)
+    writeAtomic(configPath, merged, previousSecret, Boolean(opts?.clearStoredEncryptedKey))
     cachedConfig = merged
     return get()
   }
@@ -257,7 +441,15 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
       if (!current.historyEnabled || current.historyLimit <= 0) {
         return null
       }
-      const nextHistory = [item, ...current.history]
+      const nextHistory = pruneHistoryItems([item, ...current.history], current, nowMs())
+      if (current.historyRetentionDays === 0) {
+        ephemeralHistoryIds.add(item.id)
+        cachedConfig = {
+          ...current,
+          history: nextHistory
+        }
+        return get()
+      }
       return set({
         ...current,
         history: nextHistory
@@ -271,6 +463,7 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
   }
 
   function clearHistory(): AppConfig {
+    ephemeralHistoryIds.clear()
     const current = get()
     return set({
       ...current,
@@ -280,6 +473,14 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
 
   function getCachedApiKey(): string {
     return cachedConfig?.openai.apiKey ?? ''
+  }
+
+  function getApiKeyPersistence(): ApiKeyPersistence {
+    return apiKeyPersistence
+  }
+
+  function hasUnreadableEncryptedKey(): boolean {
+    return decryptFailedOnLoad && preservedEncryptedKey !== ''
   }
 
   return {
@@ -292,7 +493,9 @@ export function createConfigStore(overrides?: Partial<ConfigStoreDeps>): ConfigS
     getCleanExitFlagPath,
     markCleanExit,
     clearCleanExit,
-    getCachedApiKey
+    getCachedApiKey,
+    getApiKeyPersistence,
+    hasUnreadableEncryptedKey
   }
 }
 
@@ -313,10 +516,12 @@ export const configStore: Omit<ConfigStoreInstance, 'getCleanExitFlagPath'> = {
   hasSavedConfigFile: () => getActiveStore().hasSavedConfigFile(),
   load: () => getActiveStore().load(),
   get: () => getActiveStore().get(),
-  set: (next: unknown) => getActiveStore().set(next),
+  set: (next: unknown, opts?: ConfigStoreSetOptions) => getActiveStore().set(next, opts),
   addHistory: (item: HistoryItem) => getActiveStore().addHistory(item),
   clearHistory: () => getActiveStore().clearHistory(),
   markCleanExit: () => getActiveStore().markCleanExit(),
   clearCleanExit: () => getActiveStore().clearCleanExit(),
-  getCachedApiKey: () => getActiveStore().getCachedApiKey()
+  getCachedApiKey: () => getActiveStore().getCachedApiKey(),
+  getApiKeyPersistence: () => getActiveStore().getApiKeyPersistence(),
+  hasUnreadableEncryptedKey: () => getActiveStore().hasUnreadableEncryptedKey()
 }

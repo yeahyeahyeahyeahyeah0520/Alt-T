@@ -7,11 +7,14 @@ import {
   type TranslateProvider,
   type TranslateResult
 } from '../../shared/types'
+import { validateLocalOnlyTarget } from '../core/baseUrl'
 
 export interface FallbackDeps {
   providers: Record<ProviderId, TranslateProvider>
   primary: ProviderId
   enableFallback: boolean
+  localOnlyMode?: boolean
+  openaiBaseUrl?: string
 }
 
 function toErrorInfo(err: unknown, provider: ProviderId): TranslateErrorInfo {
@@ -33,6 +36,20 @@ export async function translateWithFallback(
   signal?: AbortSignal
 ): Promise<TranslateResult> {
   const secondary: ProviderId = deps.primary === 'openai' ? 'edge' : 'openai'
+  const localOnly = Boolean(deps.localOnlyMode)
+  const primaryCheck = validateLocalOnlyTarget({
+    localOnlyMode: localOnly,
+    provider: deps.primary,
+    baseUrl: deps.openaiBaseUrl
+  })
+  if (!primaryCheck.ok) {
+    throw new ProviderError({
+      code: primaryCheck.code,
+      provider: deps.primary,
+      message: primaryCheck.message,
+      retryable: false
+    })
+  }
   let emittedDelta = false
 
   try {
@@ -55,10 +72,17 @@ export async function translateWithFallback(
   } catch (primaryErr) {
     const primaryInfo = toErrorInfo(primaryErr, deps.primary)
 
+    const secondaryCheck = validateLocalOnlyTarget({
+      localOnlyMode: localOnly,
+      provider: secondary,
+      baseUrl: deps.openaiBaseUrl
+    })
+
     if (
       !primaryInfo.retryable ||
       primaryInfo.code === 'ABORTED' ||
       !deps.enableFallback ||
+      !secondaryCheck.ok ||
       signal?.aborted ||
       emittedDelta
     ) {
