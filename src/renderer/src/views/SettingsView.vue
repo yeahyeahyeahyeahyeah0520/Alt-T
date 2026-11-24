@@ -58,6 +58,49 @@ const hotkeyConflicts = ref<Array<{ key: keyof HotkeyConfig; accelerator: string
 const saveError = ref('')
 const saveNotice = ref('')
 const clearStoredKey = ref(false)
+const savedSnapshot = ref('')
+
+const sectionLinks = [
+  { id: 'shortcuts', label: '快捷键' },
+  { id: 'providers', label: '翻译源' },
+  { id: 'prompts', label: 'Prompt' },
+  { id: 'terminal', label: '终端与隐私' },
+  { id: 'history', label: '历史' }
+] as const
+
+function currentSnapshot(): string {
+  return JSON.stringify({
+    form: form.value,
+    historyItems: historyItems.value,
+    latestPopupWidth: latestPopupWidth.value,
+    latestPopupHeight: latestPopupHeight.value,
+    customWtInput: customWtInput.value,
+    customConhostInput: customConhostInput.value,
+    forcePopupInput: forcePopupInput.value,
+    clearStoredKey: clearStoredKey.value
+  })
+}
+
+const isDirty = computed(() => savedSnapshot.value !== '' && savedSnapshot.value !== currentSnapshot())
+
+function captureHotkey(event: KeyboardEvent, key: keyof HotkeyConfig): void {
+  if (event.key === 'Tab' || event.key === 'Escape') return
+  if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) {
+    event.preventDefault()
+    return
+  }
+  const modifiers = [
+    event.ctrlKey ? 'Ctrl' : '',
+    event.altKey ? 'Alt' : '',
+    event.shiftKey ? 'Shift' : '',
+    event.metaKey ? 'Super' : ''
+  ].filter(Boolean)
+  const keyName = event.key.length === 1 ? event.key.toUpperCase() : event.key
+  if (modifiers.length === 0 && !/^F(?:[1-9]|1[0-9]|2[0-4])$/.test(keyName)) return
+  event.preventDefault()
+  form.value.hotkeys[key] = [...modifiers, keyName].join('+')
+  void checkHotkey(key)
+}
 
 function handleClearApiKey(): void {
   form.value.openai.apiKey = ''
@@ -315,6 +358,7 @@ async function handleSave(): Promise<void> {
       window.scrollTo({ top: 0, behavior: 'smooth' })
       return
     }
+    savedSnapshot.value = currentSnapshot()
     if (reply.storageWarning) {
       saveNotice.value = `${reply.storageWarning}（其余配置已保存；若需关闭窗口请点击“取消”）`
       window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -330,6 +374,7 @@ async function handleSave(): Promise<void> {
 }
 
 function handleCancel(): void {
+  if (isDirty.value && !window.confirm('有未保存的修改，确定要关闭设置吗？')) return
   window.close()
 }
 
@@ -357,6 +402,7 @@ onMounted(async () => {
     customWtInput.value = (loaded.customWtExeNames ?? []).join(', ')
     customConhostInput.value = (loaded.customConhostExeNames ?? []).join(', ')
     forcePopupInput.value = (loaded.forcePopupOnReplaceExes ?? []).join(', ')
+    savedSnapshot.value = currentSnapshot()
   } catch (err) {
     saveError.value = err instanceof Error ? err.message : String(err)
   }
@@ -369,6 +415,37 @@ onUnmounted(() => {
 
 <template>
   <div class="settings-root">
+    <header class="settings-header">
+      <div>
+        <div class="settings-title-row">
+          <h1>Alt-T 设置</h1>
+          <span v-if="isDirty" class="dirty-badge">有未保存修改</span>
+        </div>
+        <p>把常用工作流放在前面；高级选项不会改变全局安全边界。</p>
+      </div>
+      <nav class="section-nav" aria-label="设置分组">
+        <a v-for="link in sectionLinks" :key="link.id" :href="`#${link.id}`">{{ link.label }}</a>
+      </nav>
+    </header>
+
+    <section class="security-summary" aria-labelledby="security-summary-title">
+      <div>
+        <h2 id="security-summary-title">当前安全状态</h2>
+        <p>发送前会再次校验目标窗口；技术片段校验失败时不会自动填入。</p>
+      </div>
+      <div class="security-pills">
+        <span class="security-pill" :class="form.localOnlyMode ? 'pill-ok' : 'pill-neutral'">
+          {{ form.localOnlyMode ? '仅本机请求' : '允许网络翻译' }}
+        </span>
+        <span class="security-pill" :class="form.protectTechnicalText ? 'pill-ok' : 'pill-warn'">
+          {{ form.protectTechnicalText ? '技术片段保护' : '片段保护已关闭' }}
+        </span>
+        <span class="security-pill" :class="form.logOriginalTextPreview ? 'pill-warn' : 'pill-ok'">
+          {{ form.logOriginalTextPreview ? '允许原文日志' : '原文日志关闭' }}
+        </span>
+      </div>
+    </section>
+
     <div v-if="hotkeyConflicts.length > 0 || saveError" class="alert-error">
       <div v-if="hotkeyConflicts.length > 0">
         <strong>以下快捷键注册失败（冲突或无效）：</strong>
@@ -383,7 +460,7 @@ onUnmounted(() => {
     <div v-if="saveNotice" class="alert-warn">{{ saveNotice }}</div>
 
     <div class="sections">
-      <section class="group">
+      <section id="shortcuts" class="group">
         <h2 class="group-title">快捷键</h2>
         <div v-for="field in HOTKEY_FIELDS" :key="field.key" class="row">
           <label class="label" :for="`hk-${field.key}`">{{ field.label }}</label>
@@ -392,7 +469,9 @@ onUnmounted(() => {
               :id="`hk-${field.key}`"
               v-model="form.hotkeys[field.key]"
               type="text"
-              placeholder="例如 Alt+T"
+              placeholder="按下组合键录入，例如 Alt+T"
+              :aria-label="`${field.label}快捷键`"
+              @keydown="captureHotkey($event, field.key)"
               @blur="checkHotkey(field.key)"
             />
             <span
@@ -426,7 +505,7 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section class="group">
+      <section id="providers" class="group">
         <h2 class="group-title">翻译源</h2>
         <div class="row">
           <label class="label" for="primary-provider">主翻译源</label>
@@ -465,7 +544,7 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section class="group">
+      <section id="prompts" class="group">
         <h2 class="group-title">OpenAI 兼容</h2>
         <div class="row">
           <label class="label" for="openai-preset">快速预设</label>
@@ -600,7 +679,7 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section class="group">
+      <section id="terminal" class="group">
         <h2 class="group-title">代理</h2>
         <div class="row">
           <span class="label">启用代理</span>
@@ -620,7 +699,7 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section class="group">
+      <section id="history" class="group">
         <h2 class="group-title">其他</h2>
         <div class="row">
           <span class="label">开机自启</span>
@@ -858,6 +937,119 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+.settings-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 0 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-header h1 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.settings-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dirty-badge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--warn);
+  background: var(--warn-bg);
+  font-size: 11px;
+}
+
+.section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.section-nav a {
+  padding: 4px 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.section-nav a:hover {
+  border-color: var(--border);
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.security-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-elevated);
+}
+
+.security-summary h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.security-summary p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.security-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.security-pill {
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pill-ok {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.pill-warn {
+  border-color: var(--warn);
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.pill-neutral {
+  color: var(--muted);
+}
+
 .alert-error {
   padding: 8px 12px;
   border: 1px solid var(--danger);
@@ -895,6 +1087,7 @@ onUnmounted(() => {
 
 .sections {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -921,6 +1114,10 @@ onUnmounted(() => {
   grid-template-columns: 112px 1fr;
   align-items: center;
   gap: 8px;
+}
+
+section[id] {
+  scroll-margin-top: 74px;
 }
 
 .label {
@@ -955,6 +1152,8 @@ onUnmounted(() => {
 
 .hotkey-cell input {
   flex: 1;
+  min-width: 0;
+  cursor: crosshair;
 }
 
 .inline-actions {
@@ -1032,6 +1231,35 @@ onUnmounted(() => {
   width: 110px;
 }
 
+@media (max-width: 680px) {
+  .settings-header,
+  .security-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .section-nav,
+  .security-pills {
+    justify-content: flex-start;
+  }
+
+  .row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .inline-actions,
+  .hotkey-cell {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .history-summary {
   cursor: pointer;
   font-size: 13px;
@@ -1077,6 +1305,8 @@ onUnmounted(() => {
 }
 
 .footer {
+  position: sticky;
+  bottom: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;

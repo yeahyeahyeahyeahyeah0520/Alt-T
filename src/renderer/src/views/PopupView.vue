@@ -64,6 +64,32 @@ const providerLabel = computed(() => {
   return usedFallback.value ? `${base}（备用源）` : base
 })
 
+const targetStateLabel = computed(() => {
+  if (uiState.value.targetChanged) return '目标已切换'
+  if (!uiState.value.targetApp) return '未锁定目标'
+  if (uiState.value.ideRegion === 'unknown') return '区域未明'
+  return uiState.value.ideRegion === 'terminal' ? '终端已锁定' : '窗口已锁定'
+})
+
+const targetStateClass = computed(() => {
+  if (uiState.value.targetChanged) return 'state-warn'
+  if (!uiState.value.targetApp || uiState.value.ideRegion === 'unknown') return 'state-neutral'
+  return 'state-ok'
+})
+
+const networkStateLabel = computed(() => {
+  if (config.value.localOnlyMode) return '仅本机'
+  const provider = config.value.primaryProvider === 'edge' ? 'Edge' : '兼容接口'
+  return config.value.enableFallback ? `${provider} · 允许回退` : provider
+})
+
+const privacyStateLabel = computed(() => {
+  if (config.value.localOnlyMode) return '原文日志已关闭'
+  if (!config.value.historyEnabled) return '不保存历史'
+  if (config.value.historyRetentionDays === 0) return '历史仅保留本次会话'
+  return `历史保留 ${config.value.historyRetentionDays} 天`
+})
+
 function showLocalToast(level: NotifyPush['level'], message: string): void {
   toast.value = { level, message }
   if (toastTimer !== null) {
@@ -482,7 +508,7 @@ onUnmounted(() => {
           "
           @click="handleToggleDirectPaste"
         >
-          ⚡
+          <span aria-hidden="true">↯</span>
         </button>
         <button
           type="button"
@@ -491,16 +517,31 @@ onUnmounted(() => {
           :title="pinned ? '取消置顶' : '置顶窗口'"
           @click="handleTogglePin"
         >
-          📌
+          <span aria-hidden="true">⌖</span>
         </button>
         <button type="button" class="icon-btn" title="设置" @click="handleOpenSettings">
-          ⚙
+          <span aria-hidden="true">⚙</span>
         </button>
         <button type="button" class="icon-btn" title="关闭" @click="handleClose">
-          ✕
+          <span aria-hidden="true">×</span>
         </button>
       </div>
     </header>
+
+    <div class="trust-strip" role="status" aria-live="polite">
+      <span class="trust-item" :class="targetStateClass">
+        <span class="status-dot" aria-hidden="true"></span>
+        {{ targetStateLabel }}
+      </span>
+      <span class="trust-item">
+        <span class="trust-key">数据</span>
+        {{ networkStateLabel }}
+      </span>
+      <span class="trust-item">
+        <span class="trust-key">记录</span>
+        {{ privacyStateLabel }}
+      </span>
+    </div>
 
     <div v-if="toast" class="toast" :class="`toast-${toast.level}`">
       {{ toast.message }}
@@ -622,7 +663,10 @@ onUnmounted(() => {
         </div>
 
         <footer class="result-footer">
-          <span class="provider-meta">{{ providerLabel }}</span>
+          <div class="provider-meta">
+            <span>{{ providerLabel || networkStateLabel }}</span>
+            <span v-if="protectedVerify?.ok === true" class="verify-ok">技术片段已校验</span>
+          </div>
           <div class="footer-actions">
             <button
               type="button"
@@ -634,6 +678,11 @@ onUnmounted(() => {
             </button>
           </div>
         </footer>
+        <div class="keyboard-hint" aria-label="键盘快捷提示">
+          <span><kbd>Enter</kbd> 翻译</span>
+          <span><kbd>Ctrl</kbd><span aria-hidden="true">+</span><kbd>Enter</kbd> 填入</span>
+          <span><kbd>Esc</kbd> 关闭</span>
+        </div>
       </section>
     </main>
   </div>
@@ -696,6 +745,80 @@ onUnmounted(() => {
 .icon-btn.active {
   background: var(--accent);
   color: var(--accent-fg);
+}
+
+.trust-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 11px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .trust-strip {
+    gap: 4px;
+    padding-inline: 8px;
+  }
+
+  .trust-item {
+    padding-inline: 4px;
+  }
+
+  .toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .toolbar-btns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .toolbar-btns .primary {
+    grid-column: span 2;
+  }
+}
+
+.trust-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+}
+
+.trust-item.state-ok {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+}
+
+.trust-item.state-warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  background: var(--warn-bg);
+}
+
+.trust-item.state-neutral {
+  border-color: var(--border);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.trust-key {
+  color: var(--muted);
 }
 
 .toast {
@@ -894,8 +1017,38 @@ onUnmounted(() => {
 }
 
 .provider-meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.verify-ok {
+  color: var(--success);
+}
+
+.keyboard-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  text-align: center;
 }
 
 .copy-btn {

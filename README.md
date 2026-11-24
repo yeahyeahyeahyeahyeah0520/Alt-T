@@ -7,7 +7,7 @@
 [![CI](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/ci.yml)
 [![Release](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-4F46E5.svg)](./LICENSE)
-[![OS: Windows | macOS | Linux](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-0078D4.svg)](#cross-platform-support-matrix)
+[![OS: Windows primary | macOS/Linux experimental](https://img.shields.io/badge/OS-Windows%20primary%20%7C%20macOS%2FLinux%20experimental-0078D4.svg)](#cross-platform-support-matrix)
 [![Zero node-gyp](https://img.shields.io/badge/Native%20Deps-Zero%20node--gyp-success.svg)](#build--packaging)
 
 ---
@@ -23,6 +23,32 @@ Download prebuilt Windows binaries from the [**Latest GitHub Release**](https://
 > ```powershell
 > Get-FileHash .\Alt-T-0.1.0-setup.exe -Algorithm SHA256
 > ```
+
+## First run in 60 seconds
+
+1. Install and launch Alt-T. It stays in the tray; the target terminal does not need to be elevated.
+2. Confirm the provider in Settings. If text must stay on the machine, choose local Ollama and keep strict local-only mode enabled.
+3. Return to VS Code, Cursor, Antigravity, or Windows Terminal, press `Alt+T`, type one sentence, and press `Enter`.
+
+The first-run success check is visible in the popup: the target application is identified, the data scope is shown, and `Ctrl+Enter` puts the translated text back into the original window. If the target runs as Administrator, run Alt-T at the same integrity level; otherwise Alt-T keeps the result on the clipboard and explains how to paste it manually.
+
+## Verification scope
+
+| Capability | Status | Notes |
+| --- | --- | --- |
+| Windows build, unit tests, production audit | Verified | Current CI and local `npm run verify` pass |
+| Windows NSIS / Portable packaging | Verified | Installers and SHA-256 checksums are generated |
+| Real VS Code / Cursor / Antigravity focus trees | Manual validation pending | Headless checks are not claimed as desktop acceptance |
+| Elevated windows, IME composition, physical hotkeys | Manual validation pending | Run the acceptance matrix on the target machine |
+| macOS / Linux cross-window injection | Experimental | Depends on accessibility permissions and X11/Wayland tooling; Windows is the release focus |
+
+## Data boundaries
+
+- The popup status strip shows the target window, network scope, and history/logging state before a send.
+- Strict local-only mode permits only `localhost`, `127.0.0.0/8`, and `::1`; it bypasses proxies, blocks redirects, and disables external fallback.
+- API keys use the system credential store when available. If it is unavailable, the key remains memory-only and is never written as plaintext.
+- Original-text logging is off by default. History can be disabled or set to `0` for the current session only.
+- These settings do not weaken target re-verification, UIPI blocking, or protected technical-text validation.
 
 ---
 

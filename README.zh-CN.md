@@ -7,7 +7,7 @@
 [![CI](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/ci.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/ci.yml)
 [![Release](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/release.yml/badge.svg)](https://github.com/yeahyeahyeahyeahyeah0520/Alt-T/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-4F46E5.svg)](./LICENSE)
-[![OS: Windows | macOS | Linux](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-0078D4.svg)](#跨操作系统支持矩阵)
+[![OS: Windows primary | macOS/Linux experimental](https://img.shields.io/badge/OS-Windows%20primary%20%7C%20macOS%2FLinux%20experimental-0078D4.svg)](#跨操作系统支持矩阵)
 [![Zero node-gyp](https://img.shields.io/badge/Native%20Deps-Zero%20node--gyp-success.svg)](#构建与打包)
 
 ---
@@ -23,6 +23,32 @@
 > ```powershell
 > Get-FileHash .\Alt-T-0.1.0-setup.exe -Algorithm SHA256
 > ```
+
+## 60 秒首次使用
+
+1. 安装并启动 Alt-T；它会缩到系统托盘，不需要把目标终端改成管理员权限。
+2. 在设置中确认翻译源：不想上传文本时选择本机 Ollama，并保持“严格仅本地模式”。
+3. 回到 VS Code、Cursor、Antigravity 或 Windows Terminal，按 `Alt+T`，输入一句中文后按 `Enter`。
+
+首次使用的成功标准是：浮窗显示正确的目标应用，状态条显示数据去向，按 `Ctrl+Enter` 后英文出现在原窗口。若目标程序以管理员身份运行，请让 Alt-T 也以管理员身份运行；不提升 Alt-T 时会保留译文到剪贴板并提示手动粘贴。
+
+## 当前验证范围
+
+| 能力 | 当前状态 | 说明 |
+| --- | --- | --- |
+| Windows 构建、单元测试、生产依赖审计 | 已验证 | 当前提交的 CI 与本地 `npm run verify` 通过 |
+| Windows NSIS / Portable 打包 | 已验证 | 已生成安装版、便携版和 SHA-256 校验文件 |
+| VS Code / Cursor / Antigravity 真实焦点树 | 待实机验收 | 不把无头测试写成桌面场景通过 |
+| 管理员窗口、中文输入法组合态、实体热键 | 待实机验收 | 需要在目标机器上按验收清单复核 |
+| macOS / Linux 跨窗按键注入 | 实验性 | 依赖系统辅助功能、X11/Wayland 工具链，当前发布重点是 Windows |
+
+## 你需要知道的数据边界
+
+- 弹窗状态条会显示当前目标窗口、翻译服务范围和历史/日志状态。
+- “严格仅本地模式”只允许 `localhost`、`127.0.0.0/8` 和 `::1`，会绕过代理、拦截重定向，并禁止外网回退。
+- API Key 优先使用系统密钥库加密；密钥库不可用时只保留在当前会话内存，不写入明文配置。
+- 原文日志默认关闭；历史可以关闭，或设置为 `0` 仅保留当前会话。
+- 这些开关不会改变目标窗口二次校验、UIPI 拦截和技术片段占位符校验。
 
 ---
 

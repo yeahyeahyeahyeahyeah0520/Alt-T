@@ -34,6 +34,10 @@ jobs:
           ALT_T_SMOKE: '1'
         run: npm run verify
 
+      - name: Audit production dependencies
+        shell: pwsh
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Build Windows NSIS & Portable installers
         shell: pwsh
         run: npx electron-builder --win nsis portable --publish never
@@ -67,6 +71,15 @@ jobs:
           }
           $checksumPath = Join-Path $stageDir 'SHA256SUMS.txt'
           [System.IO.File]::WriteAllLines($checksumPath, $checksumLines, (New-Object System.Text.UTF8Encoding($false)))
+          $metadata = [ordered]@{
+            version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            commit = (git rev-parse HEAD).Trim()
+            node = (node --version).Trim()
+            electron = (node -p "require('./package.json').devDependencies.electron").Trim()
+            builtAtUtc = [DateTime]::UtcNow.ToString('o')
+            artifacts = @($checksumLines)
+          } | ConvertTo-Json -Depth 4
+          [System.IO.File]::WriteAllText((Join-Path $stageDir 'BUILD-METADATA.json'), $metadata, (New-Object System.Text.UTF8Encoding($false)))
           Get-Content $checksumPath
 
       - name: Attach installers and checksums to GitHub Release
@@ -78,3 +91,4 @@ jobs:
             release-assets/*.blockmap
             release-assets/latest.yml
             release-assets/SHA256SUMS.txt
+            release-assets/BUILD-METADATA.json

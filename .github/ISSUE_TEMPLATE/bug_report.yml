@@ -1,0 +1,63 @@
+name: Bug report
+description: Report a reproducible Alt-T problem with enough context to investigate it.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include API keys, authorization headers, private prompts, or unredacted logs.
+  - type: input
+    id: version
+    attributes:
+      label: Alt-T version
+      placeholder: "0.1.0 or commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+  - type: input
+    id: target
+    attributes:
+      label: Target application and version
+      placeholder: "Windows Terminal 1.22 / VS Code 1.95"
+    validations:
+      required: true
+  - type: dropdown
+    id: integrity
+    attributes:
+      label: Permission level
+      options:
+        - Both Alt-T and target are standard user
+        - Both Alt-T and target are Administrator
+        - Alt-T standard user, target Administrator
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Press ...
+        2. Type ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Include the output of node scripts/diagnose-hotkeys.mjs when relevant. Remove prompts and credentials.
