@@ -52,3 +52,41 @@ jobs:
       - name: Verify unpacked Windows electron-builder & Fuses build
         shell: pwsh
         run: npx electron-builder --win --dir --publish never
+
+  verify-cross-platform:
+    name: Verify (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macOS
+          - os: ubuntu-latest
+            label: Linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (Main + Preload + Vue Renderer)
+        run: npm run typecheck
+
+      - name: Enforce architecture & static rules
+        run: npm run check
+
+      - name: Run cross-platform unit & fault-injection tests
+        run: npm test
+
+      - name: Build production bundles
+        run: npm run build

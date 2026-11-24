@@ -39,10 +39,16 @@
   "defaultTargetLang": "zh-Hans",
   "historyEnabled": true,
   "historyLimit": 200,
+  "historyRetentionDays": 30,
+  "localOnlyMode": false,
+  "logOriginalTextPreview": false,
   "popupWidth": 460,
   "popupHeight": 320,
   "customWtExeNames": [],
   "customConhostExeNames": ["my-terminal.exe"],
   "forcePopupOnReplaceExes": [],
+  "protectTechnicalText": true,
+  "confirmBeforePaste": false,
+  "appOverrides": [],
   "history": []
 }

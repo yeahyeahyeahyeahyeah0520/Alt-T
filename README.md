@@ -45,11 +45,12 @@ Typing non-ASCII / CJK prompts directly inside terminal TUIs (`Claude Code`, `Co
   - **Terminals (Option A Default + Option B Toggle)**: Classifies windows by Win32 class first (`CASCADIA_HOSTING_WINDOW_CLASS`, `ConsoleWindowClass`, `mintty`, `VirtualConsoleClass`) and process name (`wt.exe`, `wezterm-gui.exe`, `alacritty.exe`, `ghostty.exe`, `warp.exe`, `waveterm.exe`, `putty.exe`, `kitty.exe`, `xshell.exe`, `mobaxterm.exe`), ensuring `^C` is never sent. See [Terminal & IDE Integrated Terminal Guidance](#terminal--ide-integrated-terminal-guidance).
 - **🔍 Non-Destructive Selection Stream (`Alt + E`)**: Highlights text in any window and streams the translation beside your cursor (`AbortController`-wired for both streaming and non-streaming requests).
 - **🔌 Zero-Config Dual Engine, Dual-Path Edge Resilience & One-Click Test**: Works out of the box via Microsoft Edge (`edge`, with automatic `translatetext` → `auth` Bearer token cognitive v3 failover) and supports any OpenAI-compatible endpoint (`Ollama`, `DeepSeek`, `OpenAI`, `OpenRouter`, `SiliconFlow`, or keyless local loopback LLMs) with quick presets, an isolated **Test Connection** button in Settings, and automatic failover (`enableFallback`).
-- **🧱 Prompt-Injection-Hardened Developer Templates**: Built-in `translate` (`通用与技术翻译`) and `cli-prompt` (`CLI 提示词精炼`) templates treat input strictly as literal source text and protect code blocks, CLI flags, paths, URLs, and identifiers.
+- **🧱 Prompt-Injection-Hardened Developer Templates & Technical Fragment Protection**: Built-in `translate` and `cli-prompt` templates treat input strictly as literal source text, while `protectTechnicalText` (`true` by default) masks fenced/inline code, URLs, Windows/POSIX paths (including CJK & spaces), CLI `--flags`, env vars, and `@mentions` with collision-free placeholders (`[[ALTT_N]]`)—aborting auto-paste and holding in preview whenever any placeholder is missing, duplicated, invented, or corrupted.
 - **🔒 Hardened Security & Privacy**:
+  - **Strict Local-Only Mode (`localOnlyMode`)**: Auto-enabled when applying local loopback presets or toggled in Settings; enforces loopback-only URLs and connect-time DNS IP checks, bypasses proxy agents, blocks HTTP `3xx` redirects, and forbids external providers (`edge`) and fallback egress.
+  - **Privacy-First Logging, History Retention & DPAPI No-Plaintext Fallback**: Original text preview logging (`logOriginalTextPreview`) defaults to `false` (metadata only); history defaults to `30`-day retention (`0` keeps session history in RAM only); `safeStorage` encryption failures keep API keys memory-only for the session without writing plaintext to disk or overwriting valid ciphertext.
   - **Zero `Win + V` History Pollution**: Transient clipboard writes use single-`ClipboardItem` OS exclusion markers (`ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory`, `CanUploadToCloudClipboard`).
-  - **DPAPI Credential Encryption & Redaction**: Encrypts `openai.apiKey` at rest via `safeStorage`, scrubs secrets/Bearer tokens/proxy credentials across logs and 60s-throttled crash notifications, denies all Chromium permission requests, tightens production CSP, and hardens builds with `@electron/fuses`.
-- **🔄 24/7 Stability & Watchdog**: Pre-hide `SetForegroundWindow` + `15ms × 8` confirmation, `TokenIntegrityLevel=25` UIPI boundary checks, `GetClipboardSequenceNumber()` verification, `EPERM`-retried atomic config saves, `powerMonitor` hotkey healing, and pure-ASCII VBS silent launcher + crash-recovery watchdog.
+- **🔄 Pre-Send Safety, Target Visibility & Direct Original Paste**: Pre-hide target capture, synchronous pre-send re-verification of HWND/PID/exe/class immediately before paste (and before every `20`-char `VK_BACK` batch in Option B, preserving translation on clipboard after partial deletion), explicit 4-state `PopupPasteReply` (`pasted | clipboard-only | cancelled | error`), target-app badge, editable preview confirmation (`confirmBeforePaste` + IME `compositionend` guards), **"Insert Original"** direct paste without translation, bounded per-app overrides (`appOverrides`), and monotonic metadata-only metrics (`metrics.ts`).
 
 ---
 
@@ -74,7 +75,7 @@ Typing non-ASCII / CJK prompts directly inside terminal TUIs (`Claude Code`, `Co
 > **Inside VS Code, Cursor, Windsurf, or Antigravity integrated terminals, always prefer `Alt + T` (`directInputTranslate`).**
 >
 > `Code.exe` stays classified as `'normal'` for regular editor panes so normal text selection continues to use `Ctrl+C` / `Ctrl+V`. To guard integrated terminals from accidental `^C` (`SIGINT`), Alt-T layers three protections:
-> 1. **Automatic Windows UI Automation Probe**: On known Electron IDEs (`code.exe`, `cursor.exe`, `windsurf.exe`, `antigravity.exe`, `vscodium.exe`, `trae.exe`), Alt-T runs a bounded (`<= 30ms`) `IUIAutomation::GetFocusedElement` check—when focus is inside an `xterm` / Terminal pane, it dynamically upgrades classification to `'wt'` (`Ctrl+Shift+C` / safe popup preview).
+> 1. **Off-Thread Windows UI Automation Worker**: On known Electron/JetBrains IDEs (`code.exe`, `cursor.exe`, `windsurf.exe`, `antigravity.exe`, `vscodium.exe`, `trae.exe`, etc.), Alt-T runs UIA checks inside an isolated Node `worker_threads` worker (`win32UiaWorker.ts`) with timeout termination and circuit breaking, classifying focus into a tri-state `'editor' | 'terminal' | 'unknown'`. Confirmed terminal panes upgrade to `'wt'` (`Ctrl+Shift+C` / safe preview), whereas `'unknown'` (timeout, PID mismatch, or non-editor widgets) refuses blind `Ctrl+C` / `Ctrl+Shift+C` and switches to direct input (`Alt+R`) or manual copy prompt (`Alt+E`).
 > 2. **Zero-`Ctrl+C` Force-Popup List (`forcePopupOnReplaceExes`)**: If accessibility is disabled in your IDE, add `code.exe` (or `cursor.exe`) in Settings under **防误触强制浮窗**—pressing `Alt + R` on those executables skips `Ctrl+C` entirely and opens the `Alt + T` direct-input bar.
 > 3. **Direct Input Flow (`Alt + T`)**: Never sends a copy keystroke and pastes cleanly into every IDE integrated terminal.
 
@@ -100,18 +101,10 @@ Alt-T queries `OpenProcessToken` + `GetTokenInformation(TokenIntegrityLevel = 25
 
 On first run, Alt-T initializes `config.json` in your user data directory (e.g., `%APPDATA%\Alt-T\config.json` in packaged builds, or refer to [`config.example.json`](./config.example.json) for the full schema).
 
-- **Encrypted API Key**: When you save an OpenAI API key in Settings, Alt-T encrypts it at rest via Electron DPAPI (`safeStorage`) into `openai.encryptedKey` and leaves `openai.apiKey` empty on disk.
-- **Local Loopback LLMs (Keyless)**: Endpoints targeting `http://localhost:<port>`, `http://127.0.0.1:<port>`, or `http://[::1]:<port>` (such as `Ollama`, `LM Studio`, `llama.cpp`, or `vLLM`) are permitted with an empty `apiKey`:
-  ```json
-  "openai": {
-    "baseUrl": "http://127.0.0.1:11434/v1",
-    "apiKey": "",
-    "model": "qwen2.5:7b",
-    "stream": true
-  }
-  ```
-- **Remote Endpoints**: Any non-loopback `baseUrl` with an empty `apiKey` fails fast locally with error code `CONFIG` (`OpenAI API key is empty`) without sending any network request.
-- **Custom Terminal & Safety Lists**: Configure `customWtExeNames`, `customConhostExeNames`, and `forcePopupOnReplaceExes` directly in Settings (or `config.json`) without modifying source code.
+- **Encrypted API Key & Safe Failure Fallback**: When `safeStorage` encryption is available (DPAPI on Windows), `openai.apiKey` is encrypted at rest into `openai.encryptedKey`. If encryption is unavailable or fails (or uses insecure Linux `basic_text`), keys remain memory-only for the session with a Settings warning—never written in plaintext to disk and never clobbering existing ciphertext.
+- **Strict Local-Only Mode (`localOnlyMode`)**: Selecting a local loopback preset (`Ollama`) enables strict local-only mode (also toggleable in Settings): enforces `localhost` / `127.0.0.0/8` / `::1` both at URL validation and DNS connect time, bypasses HTTP proxies, blocks `3xx` redirects, and disables external `edge` / non-loopback fallbacks and draft tests.
+- **Privacy & Confirmation Controls**: Configure `logOriginalTextPreview` (default `false`), `historyRetentionDays` (default `30`, `0` = session RAM only), `protectTechnicalText` (default `true`), `confirmBeforePaste` (default `false`), custom terminal/force-popup process lists, and guardrail-bounded `appOverrides` (per-app language, prompt template, direct paste, and protection settings that can never weaken global `localOnlyMode` or safety fences).
+- **CI Verification Scope**: GitHub Actions runs automated `typecheck`, static `check`, mocked/local-HTTP unit tests (`npm test`), and `electron-vite build` across `windows-latest`, `macos-latest`, and `ubuntu-latest`, plus isolated headless smoke boot (`ALT_T_SMOKE=1 npm run smoke`) on Windows; real interactive hotkey registration, cross-window keystroke injection (`SendInput` / `CGEvent` / `xdotool`), and live IDE UIA trees require an interactive local desktop session.
 - **One-Click Presets & Isolated Connection Test**: Use the Settings preset selector (`Ollama`, `DeepSeek`, `OpenAI`, `OpenRouter`, `SiliconFlow`) and **Test Connection** button to verify unsaved provider/proxy drafts without writing history or overwriting disk config.
 - **Clipboard Format Scope**: During selection capture and paste, Alt-T backs up and restores `text/plain`, `text/html`, `text/rtf`, and `image/*`. Non-text/image OS formats such as file drops (`CF_HDROP`) are not backed up.
 

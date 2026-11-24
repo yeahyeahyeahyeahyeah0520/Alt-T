@@ -45,11 +45,12 @@
   - **终端窗口（默认 Option A + 可选 Option B）**：按 Win32 窗口类名优先识别（`CASCADIA_HOSTING_WINDOW_CLASS`、`ConsoleWindowClass`、`mintty`、`VirtualConsoleClass`）并结合进程名（`wt.exe`、`wezterm-gui.exe`、`alacritty.exe`、`ghostty.exe`、`warp.exe`、`waveterm.exe`、`putty.exe`、`kitty.exe`、`xshell.exe`、`mobaxterm.exe`），确保**绝不误发 `^C`**。详见[终端与 IDE 内置终端使用指引](#终端与-ide-内置终端使用指引)。
 - **🔍 划词流式翻译（`Alt + E`）**：选中终端报错或技术文档，在光标旁实时流式展示译文，不修改原窗口（流式与非流式均接入 `AbortController` 取消链路）。
 - **🔌 免配置双引擎、Edge 双路径容灾与一键测速**：开箱即用 **Edge 免费直连**（`edge`，内置 `translatetext` → `auth` 令牌认知接口二级容灾），支持任意 **OpenAI 兼容接口**（内置 `Ollama`、`DeepSeek`、`OpenAI`、`OpenRouter`、`硅基流动` 快速预设与无副作用「测试连接」按钮），主备自动回退（`enableFallback`）。
-- **🧱 防提示词注入开发者模板**：内置 `translate`（通用与技术翻译）与 `cli-prompt`（CLI 提示词精炼）模板，严格将用户输入视作待翻译纯文本，拒绝执行输入中的指令，原样保留代码块、CLI 参数、路径与变量名。
+- **🧱 防注入开发者模板与技术片段保护**：内置 `translate` 与 `cli-prompt` 模板严格将输入视作待译纯文本；默认开启 `protectTechnicalText`，自动将代码块、行内代码、URL、Windows/POSIX 路径（含中文与空格）、命令行 `--flags`、环境变量与 `@mentions` 替换为防冲突占位符（`[[ALTT_N]]`），若模型丢漏、重复、伪造或损坏占位符，自动拦截粘贴并停留在浮窗提示人工核对。
 - **🔒 系统级安全与隐私加固**：
-  - **隔离 `Win + V` 剪贴板历史**：内部瞬时写入通过单次 `ClipboardItem` 附加 `ExcludeClipboardContentFromMonitorProcessing`、`CanIncludeInClipboardHistory` 与 `CanUploadToCloudClipboard`（全零 DWORD 标记）。
-  - **DPAPI 密钥加密与全链路脱敏**：使用 Electron `safeStorage` 加密存储 `openai.apiKey`；日志与 60 秒冷却节流的未捕获异常通知自动脱敏密钥、Bearer Token 与代理账号密码；默认拒绝所有浏览器权限、收紧生产环境 CSP，并在打包阶段启用 `@electron/fuses`。
-- **🔄 7×24 小时稳定运行与看门狗**：隐藏浮窗前移交焦点 + `15ms × 8` 确认、`TokenIntegrityLevel=25` UIPI 高权检测、`GetClipboardSequenceNumber()` 序列号复用与还原校验、`EPERM` 退避原子写配置、`powerMonitor` 热键自愈，以及纯 ASCII 无 BOM 的 `.vbs` 静默启动器与崩溃重启看门狗。
+  - **严格仅本地模式（`localOnlyMode`）**：选用本地预设自动启用或手动开启，同时校验请求 URL 与连接时 DNS 解析 IP 均为本机回环（`localhost` / `127.0.0.0/8` / `::1`），强制绕过代理、拦截 `3xx` 重定向，并禁止回退或测速任何外网源（如 `edge`）。
+  - **日志/历史隐私与密钥无明文降级**：默认关闭原文预览日志（`logOriginalTextPreview: false`），历史默认保留 `30` 天（设 `0` 仅当前会话内存保留，不落盘）；`safeStorage` 不可用或加密失败时密钥仅留存会话内存并提示警告，绝不以明文写入磁盘或覆盖已有密文。
+  - **隔离 `Win + V` 剪贴板历史**：瞬时剪贴板写入通过单次 `ClipboardItem` 附加 OS 排除标记，不污染系统剪贴板历史与云剪贴板。
+- **🔄 发送前二次校验、目标可见性与原文直填**：隐藏浮窗前移交焦点、在发送粘贴按键前（以及 Option B 每批 `20` 字符退格前）同步二次校验目标窗口 HWND/PID/exe/类名（部分退格后中断时把译文保留在纯文本剪贴板）、统一四态粘贴反馈（`pasted | clipboard-only | cancelled | error`）、标题栏目标进程徽章与漂移告警、可编辑确认模式与输入法 `compositionend` 保护、免翻译「**填入原文**」、受全局护栏严格约束的分应用覆盖（`appOverrides`），以及单调时钟阶段耗时的无隐私指标基线（`metrics.ts`）。
 
 ---
 
@@ -74,7 +75,7 @@
 > **在 VS Code、Cursor、Windsurf 或 Antigravity 的内置终端中，强烈建议直接使用 `Alt + T`（极速译入终端/窗口）。**
 >
 > `Code.exe` 在普通编辑区保持为 `'normal'`（常规窗口）以确保划词仍可正常使用 `Ctrl+C` / `Ctrl+V`。为防止在内置终端误发 `^C`（`SIGINT`），Alt-T 提供三层组合防护：
-> 1. **Windows 界面自动化（`UI Automation`）自动探测**：当目标进程属于已知 Electron 编辑器（`code.exe`、`cursor.exe`、`windsurf.exe`、`antigravity.exe`、`vscodium.exe`、`trae.exe`）时，程序会执行带 30 ms 超时保护的焦点节点探测——命中内置终端面板（`xterm` / 终端）时自动升级为 `'wt'`（改用 `Ctrl+Shift+C` 与安全浮窗预览）。
+> 1. **工作线程隔离的 Windows `UI Automation` 三态探测**：针对已知 IDE（`code.exe`、`cursor.exe`、`windsurf.exe`、`antigravity.exe`、`vscodium.exe`、`trae.exe` 等），探测逻辑运行在独立的 `worker_threads` 工作线程（`win32UiaWorker.ts`）中并带超时终止与熔断，输出 `'editor' | 'terminal' | 'unknown'` 三态结果。确认焦点在集成终端时自动切换为 `'wt'`；当返回 `'unknown'`（超时、PID 不匹配或处于 Chat/SCM 等非主编辑组件）时绝不盲发 `Ctrl+C`/`Ctrl+Shift+C`，`Alt+R` 安全切入输入条，`Alt+E` 提示手动复制。
 > 2. **零 `Ctrl+C` 强制浮窗名单（`forcePopupOnReplaceExes`）**：如果编辑器关闭了无障碍树，可在设置页「防误触强制浮窗」中填入 `code.exe` 等进程名——对这些进程按 `Alt + R` 将彻底跳过 `Ctrl+C`，直接切换为 `Alt + T` 独立输入条。
 > 3. **极速直填工作流（`Alt + T`）**：全程不向目标窗口发送复制键，天然零 `^C` 风险。
 
@@ -100,18 +101,10 @@ Alt-T 通过 `OpenProcessToken` + `GetTokenInformation(TokenIntegrityLevel = 25)
 
 首次运行会在用户数据目录生成 `config.json`（打包版本位于 `%APPDATA%\Alt-T\config.json`），完整字段结构可参考 [`config.example.json`](./config.example.json)。
 
-- **密钥加密存储**：在设置页保存 OpenAI API Key 时，会通过 Windows DPAPI（`safeStorage`）加密写入 `openai.encryptedKey`，磁盘上的 `openai.apiKey` 保持为空。
-- **本地回环大模型（免 API Key）**：当 `openai.baseUrl` 指向 `http://localhost:<port>`、`http://127.0.0.1:<port>` 或 `http://[::1]:<port>`（如 `Ollama`、`LM Studio`、`llama.cpp`、`vLLM`）时，允许 `apiKey` 留空直接请求：
-  ```json
-  "openai": {
-    "baseUrl": "http://127.0.0.1:11434/v1",
-    "apiKey": "",
-    "model": "qwen2.5:7b",
-    "stream": true
-  }
-  ```
-- **远端接口拦截**：非回环地址若 `apiKey` 为空，会在本地直接抛出 `CONFIG` 错误（`OpenAI API key is empty`），不会向外网发起无效请求。
-- **自定义终端与防误触名单**：可在设置页直接配置（或编辑 `config.json` 中的 `customWtExeNames`、`customConhostExeNames` 与 `forcePopupOnReplaceExes`），为第三方终端指定热键协议或为编辑器开启零 `Ctrl+C` 防护，修改即刻生效。
+- **密钥加密与无明文降级**：当系统支持 `safeStorage`（如 Windows DPAPI，排除 Linux 不安全明文后端）时，`openai.apiKey` 加密存为 `openai.encryptedKey`；若密钥库不可用或加解密异常，密钥仅保存在当前会话内存并警示，绝不向磁盘写入明文，也不会覆写已有有效密文。
+- **严格仅本地模式（`localOnlyMode`）**：在设置中选择本地回环预设（如 `Ollama`）会自动开启严格仅本地模式（也可手动开关）：在 URL 解析与 DNS 连接阶段校验回环地址，禁用代理、拦截 `3xx` 重定向，并阻止外网翻译源与测速。
+- **隐私、确认模式与分应用覆盖**：可在设置页或 `config.json` 配置 `logOriginalTextPreview`（默认 `false`）、`historyRetentionDays`（默认 `30`，`0` 仅内存会话不落盘）、`protectTechnicalText`（默认 `true`）、`confirmBeforePaste`（默认 `false`）、自定义终端/强制浮窗名单，以及按 exe 配置语言/模板/直填策略的 `appOverrides`（全局安全与隐私红线不可被覆盖削弱）。
+- **CI 验证范围说明**：GitHub Actions 在 `windows-latest`、`macos-latest` 与 `ubuntu-latest` 三平台自动执行 `typecheck`、静态规范检查 `check`、`npm test` 单元测试与 `electron-vite build`，并在 Windows 上运行隔离无头冒烟（`ALT_T_SMOKE=1 npm run smoke`）；真实的全局热键占键、跨窗物理按键注入及真实 IDE 焦点树依赖本地交互桌面手工回归。
 - **常用服务商预设与无副作用测速**：设置页支持一键填入 `Ollama` / `DeepSeek` / `OpenAI` / `OpenRouter` / `硅基流动` 预设，并可在保存前直接点击「测试连接」验证未保存草稿的连通性与延迟（不写历史、不覆盖磁盘配置）。
 - **剪贴板备份范围**：取词/替换期间仅备份与恢复 `text/plain`、`text/html`、`text/rtf` 与位图 `image/*`；文件列表（`CF_HDROP`）等非文本/图片格式不在备份范围内。
 

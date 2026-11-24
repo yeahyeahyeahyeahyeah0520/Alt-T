@@ -1,7 +1,13 @@
 import crypto from 'node:crypto'
 import { clipboard, Notification } from 'electron'
 import {
-  createHistoryEntry,
+  createMetricsTracker,
+  nowMonotonicMs,
+  type MetricIdeRegion,
+  type MetricOutcome,
+  type MetricsSummary
+} from '../core/metrics'
+import { createHistoryEntry,
   resolveEffectiveAppPolicy,
   shouldLogOriginalTextPreview
 } from '../../shared/config'
@@ -195,8 +201,21 @@ function getRuntime(): SelectionRuntimeDeps {
   }
 }
 
+const selectionMetrics = createMetricsTracker()
+
+export function getSelectionMetricsSummary(): MetricsSummary {
+  return selectionMetrics.getSummary()
+}
+
+export function resetSelectionMetricsForTest(): void {
+  selectionMetrics.reset()
+}
+
 export function configureSelectionService(nextDeps: SelectionServiceDeps | null): void {
   deps = nextDeps
+  if (nextDeps === null) {
+    lastPopupTargetContext = null
+  }
 }
 
 export function setSelectionRuntimeForTest(override: Partial<SelectionRuntimeDeps> | null): void {
@@ -204,6 +223,7 @@ export function setSelectionRuntimeForTest(override: Partial<SelectionRuntimeDep
   if (override === null) {
     busy = false
     activeReplaceController = null
+    lastPopupTargetContext = null
   }
 }
 
@@ -399,12 +419,18 @@ export async function pasteTextToWindow(
     return preError
   }
 
+  const flowStartedAt = nowMonotonicMs()
   busy = true
   try {
     if (!rt.host.canInjectKeystrokes()) {
       await rt.clipboard.writeText(textToPaste)
       hidePopup?.()
       rt.notifySystem(MSG.CLIPBOARD_ONLY_MODE)
+      selectionMetrics.record({
+        flow: 'paste',
+        outcome: 'clipboard-only',
+        totalMs: nowMonotonicMs() - flowStartedAt
+      })
       return {
         ok: false,
         status: 'clipboard-only',
@@ -419,6 +445,11 @@ export async function pasteTextToWindow(
       hidePopup?.()
       logWarn(`pasteTextToWindow UIPI fallback for handle=${targetHandle}`)
       rt.notifySystem(MSG.UIPI_PASTE_FALLBACK)
+      selectionMetrics.record({
+        flow: 'paste',
+        outcome: 'clipboard-only',
+        totalMs: nowMonotonicMs() - flowStartedAt
+      })
       return {
         ok: false,
         status: 'clipboard-only',
@@ -446,6 +477,13 @@ export async function pasteTextToWindow(
         (trackedCtx.exeName && currentExe && currentExe !== trackedCtx.exeName) ||
         (trackedCtx.className && currentClass && currentClass !== trackedCtx.className)
       ) {
+        selectionMetrics.record({
+          flow: 'paste',
+          outcome: 'cancelled',
+          totalMs: nowMonotonicMs() - flowStartedAt,
+          ideRegion: trackedCtx.ideRegion as MetricIdeRegion | undefined,
+          targetChanged: true
+        })
         return {
           ok: false,
           status: 'cancelled',
@@ -475,6 +513,13 @@ export async function pasteTextToWindow(
       logWarn(`pasteTextToWindow foreground mismatch: expected=${targetHandle}, actual=${currentActive}`)
       deps?.reshowPopupInactive?.()
       rt.notifySystem(MSG.TARGET_FOREGROUND_LOST)
+      selectionMetrics.record({
+        flow: 'paste',
+        outcome: 'cancelled',
+        totalMs: nowMonotonicMs() - flowStartedAt,
+        ideRegion: trackedCtx.ideRegion as MetricIdeRegion | undefined,
+        targetChanged: true
+      })
       return {
         ok: false,
         status: 'cancelled',
@@ -494,13 +539,23 @@ export async function pasteTextToWindow(
     await rt.clipboardBackup.writeTransientClipboardText(textToPaste)
     const seqAfterWrite = rt.host.getClipboardSequenceNumber()
 
+    const preSendStartedAt = nowMonotonicMs()
     const preSendCheck = verifyTargetContext(rt, trackedCtx)
+    const pasteVerifyMs = nowMonotonicMs() - preSendStartedAt
     if (!preSendCheck.ok) {
       await rt.clipboardBackup.restoreClipboardIfUnchanged(snap, textToPaste, seqAfterWrite)
       deps?.reshowPopupInactive?.()
       const cancelMessage = mapVerifyFailureMessage(preSendCheck.reason)
       logWarn(`pasteTextToWindow cancelled before paste: ${preSendCheck.reason}`)
       rt.notifySystem(cancelMessage)
+      selectionMetrics.record({
+        flow: 'paste',
+        outcome: 'cancelled',
+        totalMs: nowMonotonicMs() - flowStartedAt,
+        pasteVerifyMs,
+        ideRegion: trackedCtx.ideRegion as MetricIdeRegion | undefined,
+        targetChanged: true
+      })
       return {
         ok: false,
         status: 'cancelled',
@@ -517,6 +572,12 @@ export async function pasteTextToWindow(
       const msg = getPasteErrorMessage(err)
       logError('pasteTextToWindow dispatchPaste failed', err)
       rt.notifySystem(msg)
+      selectionMetrics.record({
+        flow: 'paste',
+        outcome: 'clipboard-only',
+        totalMs: nowMonotonicMs() - flowStartedAt,
+        pasteVerifyMs
+      })
       return {
         ok: false,
         status: 'clipboard-only',
@@ -530,10 +591,23 @@ export async function pasteTextToWindow(
 
     await rt.sleep(POST_PASTE_RESTORE_DELAY_MS)
     await rt.clipboardBackup.restoreClipboardIfUnchanged(snap, textToPaste, seqAfterWrite)
+    selectionMetrics.record({
+      flow: 'paste',
+      outcome: 'pasted',
+      totalMs: nowMonotonicMs() - flowStartedAt,
+      pasteVerifyMs,
+      ideRegion: trackedCtx.ideRegion as MetricIdeRegion | undefined
+    })
+    lastPopupTargetContext = null
     return { ok: true, status: 'pasted' }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     logError('pasteTextToWindow unexpected error', err)
+    selectionMetrics.record({
+      flow: 'paste',
+      outcome: 'error',
+      totalMs: nowMonotonicMs() - flowStartedAt
+    })
     return { ok: false, status: 'error', reason: 'unexpected-error', message: msg }
   } finally {
     busy = false
@@ -558,7 +632,7 @@ function showS11PopupFallback(
   }
 ): void {
   const requestId = crypto.randomUUID()
-  lastPopupTargetContext = extra?.targetContext ?? null
+  lastPopupTargetContext = extra?.targetChanged ? null : (extra?.targetContext ?? null)
   const showFn = activeDeps.showInactiveAtCursor ?? activeDeps.showPopupAtCursor
   showFn({
     mode: 'selection',
@@ -607,6 +681,7 @@ type CaptureResult =
       snap: ClipboardSnapshot
       seqAfterRestore: number
       targetContext: TargetContext
+      uiaProbeMs?: number
     }
   | {
       ok: false
@@ -620,6 +695,7 @@ type CaptureResult =
         | 'non-text'
         | 'too-long'
       targetContext?: TargetContext
+      uiaProbeMs?: number
     }
 
 async function captureSelectionText(
@@ -636,16 +712,27 @@ async function captureSelectionText(
   }
 
   const customSets = buildCustomExeSets(cfg)
-  const classification = rt.host.getTargetWindowClassification
-    ? await rt.host.getTargetWindowClassification(handle, customSets)
-    : undefined
+  let classification: WindowClassification | undefined
+  let uiaProbeMs: number | undefined
+  if (rt.host.getTargetWindowClassification) {
+    const uiaStartedAt = nowMonotonicMs()
+    classification = await rt.host.getTargetWindowClassification(handle, customSets)
+    if (
+      classification &&
+      (classification.ideRegion !== undefined || classification.uiaReason !== undefined)
+    ) {
+      uiaProbeMs = nowMonotonicMs() - uiaStartedAt
+    }
+  }
   if (classification?.ideRegion === 'unknown') {
     return {
       ok: false,
       reason: 'ide-region-unknown',
-      targetContext: captureTargetSnapshot(rt, handle, classification)
+      targetContext: captureTargetSnapshot(rt, handle, classification),
+      ...(uiaProbeMs !== undefined ? { uiaProbeMs } : {})
     }
   }
+  const uiaOpt = uiaProbeMs !== undefined ? { uiaProbeMs } : {}
   const copyKind = classification?.inputKind ?? rt.host.getTargetCopyKind(handle, customSets)
   const pasteKind = classification?.inputKind ?? rt.host.getTargetPasteKind(handle, customSets)
   const titleAtStart = pasteKind === 'wt' ? rt.host.getWindowTitle(handle) : ''
@@ -662,9 +749,9 @@ async function captureSelectionText(
     logError('dispatchCopyShortcut failed', err)
     const errMsg = err instanceof Error ? err.message : String(err)
     if (errMsg === 'MACOS_ACCESSIBILITY_DENIED') {
-      return { ok: false, reason: 'macos-accessibility-denied' }
+      return { ok: false, reason: 'macos-accessibility-denied', ...uiaOpt }
     }
-    return { ok: false, reason: 'copy-failed' }
+    return { ok: false, reason: 'copy-failed', ...uiaOpt }
   }
 
   const pollTimeoutMs =
@@ -682,7 +769,7 @@ async function captureSelectionText(
 
   if (rawCaptured === null) {
     await rt.clipboardBackup.restoreClipboard(snap)
-    return { ok: false, reason: 'no-selection' }
+    return { ok: false, reason: 'no-selection', ...uiaOpt }
   }
 
   const normalizedText =
@@ -692,11 +779,11 @@ async function captureSelectionText(
   const seqAfterRestore = rt.host.getClipboardSequenceNumber()
 
   if (normalizedText.trim() === '') {
-    return { ok: false, reason: 'non-text' }
+    return { ok: false, reason: 'non-text', ...uiaOpt }
   }
 
   if (normalizedText.length > MAX_TRANSLATE_CHARS) {
-    return { ok: false, reason: 'too-long' }
+    return { ok: false, reason: 'too-long', ...uiaOpt }
   }
 
   return {
@@ -711,7 +798,8 @@ async function captureSelectionText(
       rt,
       handle,
       classification ?? { inputKind: pasteKind }
-    )
+    ),
+    ...uiaOpt
   }
 }
 
@@ -843,6 +931,12 @@ function runShowMode(params: {
     })
 }
 
+interface ReplaceExecutionOutcome {
+  returnStatus: 'done' | 'error'
+  metricOutcome: MetricOutcome
+  targetChanged?: boolean
+}
+
 async function pasteReplacementAndRecord(params: {
   translatedText: string
   sourceText: string
@@ -856,7 +950,7 @@ async function pasteReplacementAndRecord(params: {
   usedProvider: ProviderId
   usedFallback: boolean
   logContext: string
-}): Promise<'done' | 'error'> {
+}): Promise<ReplaceExecutionOutcome> {
   const {
     translatedText,
     sourceText,
@@ -895,9 +989,10 @@ async function pasteReplacementAndRecord(params: {
         translatedText,
         usedProvider,
         usedFallback,
-        cancelMsg
+        cancelMsg,
+        { targetContext, targetChanged: true }
       )
-      return 'error'
+      return { returnStatus: 'error', metricOutcome: 'cancelled', targetChanged: true }
     }
   }
 
@@ -908,13 +1003,13 @@ async function pasteReplacementAndRecord(params: {
     await rt.clipboard.writeText(translatedText)
     rt.notifySystem(getPasteErrorMessage(err))
     logError(logContext, err)
-    return 'error'
+    return { returnStatus: 'error', metricOutcome: 'clipboard-only' }
   }
 
   await rt.sleep(POST_PASTE_RESTORE_DELAY_MS)
   await rt.clipboardBackup.restoreClipboardIfUnchanged(snap2, translatedText, seqAfterWrite)
   recordHistory(rt, activeDeps, sourceText, translatedText, usedProvider, to)
-  return 'done'
+  return { returnStatus: 'done', metricOutcome: 'pasted' }
 }
 
 const TERMINAL_BACKSPACE_BATCH_CHARS = 20
@@ -936,7 +1031,7 @@ async function runReplaceModeTerminal(params: {
   to: TargetLang
   usedProvider: ProviderId
   usedFallback: boolean
-}): Promise<'done' | 'error'> {
+}): Promise<ReplaceExecutionOutcome> {
   const {
     translatedText,
     rawText,
@@ -983,7 +1078,7 @@ async function runReplaceModeTerminal(params: {
       message: MSG.TERMINAL_SELECTION_TRANSLATED
     })
     recordHistory(rt, activeDeps, normalizedText, translatedText, usedProvider, to)
-    return 'done'
+    return { returnStatus: 'done', metricOutcome: 'shown' }
   }
 
   const effectiveCtx: TargetContext =
@@ -1005,9 +1100,10 @@ async function runReplaceModeTerminal(params: {
       usedFallback,
       titleChanged || (!preCheck.ok && preCheck.reason === 'target-tab-changed')
         ? MSG.TARGET_CHANGED_TAB
-        : mapVerifyFailureMessage(preCheck.ok ? 'target-changed' : preCheck.reason)
+        : mapVerifyFailureMessage(preCheck.ok ? 'target-changed' : preCheck.reason),
+      { targetContext: effectiveCtx, targetChanged: true }
     )
-    return 'done'
+    return { returnStatus: 'done', metricOutcome: 'shown', targetChanged: true }
   }
 
   await rt.host.releasePressedModifiers()
@@ -1036,7 +1132,8 @@ async function runReplaceModeTerminal(params: {
           translatedText,
           usedProvider,
           usedFallback,
-          MSG.TARGET_CHANGED_AFTER_PARTIAL_DELETE
+          MSG.TARGET_CHANGED_AFTER_PARTIAL_DELETE,
+          { targetContext: effectiveCtx, targetChanged: true }
         )
       } else {
         await rt.clipboardBackup.restoreClipboardIfUnchanged(snap2, translatedText, seqAfterWrite)
@@ -1048,10 +1145,11 @@ async function runReplaceModeTerminal(params: {
           translatedText,
           usedProvider,
           usedFallback,
-          mapVerifyFailureMessage(batchVerify.reason)
+          mapVerifyFailureMessage(batchVerify.reason),
+          { targetContext: effectiveCtx, targetChanged: true }
         )
       }
-      return 'error'
+      return { returnStatus: 'error', metricOutcome: 'cancelled', targetChanged: true }
     }
     const chunk = Math.min(TERMINAL_BACKSPACE_BATCH_CHARS, remaining)
     await rt.host.dispatchBackspaces(chunk)
@@ -1076,7 +1174,8 @@ async function runReplaceModeTerminal(params: {
         translatedText,
         usedProvider,
         usedFallback,
-        MSG.TARGET_CHANGED_AFTER_PARTIAL_DELETE
+        MSG.TARGET_CHANGED_AFTER_PARTIAL_DELETE,
+        { targetContext: effectiveCtx, targetChanged: true }
       )
     } else {
       await rt.clipboardBackup.restoreClipboardIfUnchanged(snap2, translatedText, seqAfterWrite)
@@ -1088,10 +1187,11 @@ async function runReplaceModeTerminal(params: {
         translatedText,
         usedProvider,
         usedFallback,
-        mapVerifyFailureMessage(preSendCheck.reason)
+        mapVerifyFailureMessage(preSendCheck.reason),
+        { targetContext: effectiveCtx, targetChanged: true }
       )
     }
-    return 'error'
+    return { returnStatus: 'error', metricOutcome: 'cancelled', targetChanged: true }
   }
 
   try {
@@ -1100,13 +1200,13 @@ async function runReplaceModeTerminal(params: {
     await rt.clipboard.writeText(translatedText)
     rt.notifySystem(getPasteErrorMessage(err))
     logError('dispatchPasteShortcut failed (terminal auto-backspace)', err)
-    return 'error'
+    return { returnStatus: 'error', metricOutcome: 'clipboard-only' }
   }
 
   await rt.sleep(POST_PASTE_RESTORE_DELAY_MS)
   await rt.clipboardBackup.restoreClipboardIfUnchanged(snap2, translatedText, seqAfterWrite)
   recordHistory(rt, activeDeps, normalizedText, translatedText, usedProvider, to)
-  return 'done'
+  return { returnStatus: 'done', metricOutcome: 'pasted' }
 }
 
 async function runReplaceModeNormal(params: {
@@ -1122,7 +1222,7 @@ async function runReplaceModeNormal(params: {
   text: string
   usedProvider: ProviderId
   usedFallback: boolean
-}): Promise<'done' | 'error'> {
+}): Promise<ReplaceExecutionOutcome> {
   const {
     translatedText,
     targetContext,
@@ -1149,9 +1249,10 @@ async function runReplaceModeNormal(params: {
       usedFallback,
       preCheck.reason === 'target-foreground-lost'
         ? MSG.TARGET_CHANGED
-        : mapVerifyFailureMessage(preCheck.reason)
+        : mapVerifyFailureMessage(preCheck.reason),
+      { targetContext, targetChanged: true }
     )
-    return 'done'
+    return { returnStatus: 'done', metricOutcome: 'shown', targetChanged: true }
   }
 
   await rt.host.releasePressedModifiers()
@@ -1182,6 +1283,7 @@ export async function runSelectionFlow(
   busy = true
 
   const rt = getRuntime()
+  const flowStartedAt = nowMonotonicMs()
   const watchdog = new AbortController()
   let watchdogTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
     watchdogTimer = null
@@ -1206,15 +1308,30 @@ export async function runSelectionFlow(
     if (!rt.host.canInjectKeystrokes()) {
       if (mode === 'replace' && deps?.openDirectInput) {
         deps.openDirectInput(0)
+        selectionMetrics.record({
+          flow: mode,
+          outcome: 'direct-input',
+          totalMs: nowMonotonicMs() - flowStartedAt
+        })
         return 'done'
       }
       rt.notifySystem(MSG.PLATFORM_NO_INJECT)
+      selectionMetrics.record({
+        flow: mode,
+        outcome: 'no-selection',
+        totalMs: nowMonotonicMs() - flowStartedAt
+      })
       return 'no-selection'
     }
 
     const handle0 = rt.host.getActiveTargetHandle()
     if (handle0 === 0) {
       rt.notifySystem(MSG.NO_FOREGROUND)
+      selectionMetrics.record({
+        flow: mode,
+        outcome: 'error',
+        totalMs: nowMonotonicMs() - flowStartedAt
+      })
       return 'error'
     }
 
@@ -1228,17 +1345,38 @@ export async function runSelectionFlow(
         } else {
           rt.notifySystem(MSG.FORCE_POPUP_REPLACE_REDIRECT)
         }
+        selectionMetrics.record({
+          flow: 'replace',
+          outcome: 'direct-input',
+          totalMs: nowMonotonicMs() - flowStartedAt
+        })
         return 'done'
       }
       rt.notifySystem(MSG.FORCE_POPUP_REPLACE_REDIRECT)
+      selectionMetrics.record({
+        flow: 'replace',
+        outcome: 'no-selection',
+        totalMs: nowMonotonicMs() - flowStartedAt
+      })
       return 'no-selection'
     }
 
+    const captureStartedAt = nowMonotonicMs()
     const capture = await captureSelectionText(handle0, rt, cfg, mode)
+    const captureMs = nowMonotonicMs() - captureStartedAt
+    const uiaOpt = capture.uiaProbeMs !== undefined ? { uiaProbeMs: capture.uiaProbeMs } : {}
+
     if (!capture.ok) {
       switch (capture.reason) {
         case 'own-window':
           logInfo(`selection flow ignored on own process window handle=${handle0}`)
+          selectionMetrics.record({
+            flow: mode,
+            outcome: 'no-selection',
+            captureMs,
+            ...uiaOpt,
+            totalMs: nowMonotonicMs() - flowStartedAt
+          })
           return 'no-selection'
         case 'ide-region-unknown':
           if (mode === 'replace' && deps?.openDirectInput) {
@@ -1248,38 +1386,113 @@ export async function runSelectionFlow(
             } else {
               rt.notifySystem(MSG.IDE_REGION_UNKNOWN_POPUP)
             }
+            selectionMetrics.record({
+              flow: 'replace',
+              outcome: 'direct-input',
+              captureMs,
+              ...uiaOpt,
+              totalMs: nowMonotonicMs() - flowStartedAt,
+              ideRegion: 'unknown',
+              ideUnknown: true
+            })
             return 'done'
           }
           rt.notifySystem(MSG.IDE_REGION_UNKNOWN_COPY)
+          selectionMetrics.record({
+            flow: mode,
+            outcome: 'no-selection',
+            captureMs,
+            ...uiaOpt,
+            totalMs: nowMonotonicMs() - flowStartedAt,
+            ideRegion: 'unknown',
+            ideUnknown: true
+          })
           return 'no-selection'
         case 'uipi':
           logWarn(`selection flow blocked by privilege boundary on handle=${handle0}`)
           rt.notifySystem(MSG.UIPI_BLOCKED)
+          selectionMetrics.record({
+            flow: mode,
+            outcome: 'no-selection',
+            captureMs,
+            ...uiaOpt,
+            totalMs: nowMonotonicMs() - flowStartedAt
+          })
           return 'no-selection'
         case 'macos-accessibility-denied':
           rt.notifySystem(MSG.MACOS_ACCESSIBILITY_DENIED_COPY)
+          selectionMetrics.record({
+            flow: mode,
+            outcome: 'error',
+            captureMs,
+            ...uiaOpt,
+            totalMs: nowMonotonicMs() - flowStartedAt
+          })
           return 'error'
         case 'copy-failed':
           rt.notifySystem(MSG.COPY_SHORTCUT_FAILED)
+          selectionMetrics.record({
+            flow: mode,
+            outcome: 'error',
+            captureMs,
+            ...uiaOpt,
+            totalMs: nowMonotonicMs() - flowStartedAt
+          })
           return 'error'
         case 'no-selection':
           if (mode === 'replace' && deps?.openDirectInput) {
             deps.openDirectInput(handle0)
+            selectionMetrics.record({
+              flow: 'replace',
+              outcome: 'direct-input',
+              captureMs,
+              ...uiaOpt,
+              totalMs: nowMonotonicMs() - flowStartedAt
+            })
             return 'done'
           }
           rt.notifySystem(MSG.NO_SELECTION_OR_UIPI)
+          selectionMetrics.record({
+            flow: mode,
+            outcome: 'no-selection',
+            captureMs,
+            ...uiaOpt,
+            totalMs: nowMonotonicMs() - flowStartedAt
+          })
           return 'no-selection'
         case 'non-text':
           rt.notifySystem(MSG.NO_TEXT_SELECTED)
+          selectionMetrics.record({
+            flow: mode,
+            outcome: 'no-selection',
+            captureMs,
+            ...uiaOpt,
+            totalMs: nowMonotonicMs() - flowStartedAt
+          })
           return 'no-selection'
         case 'too-long':
           rt.notifySystem(MSG.TEXT_TOO_LONG)
+          selectionMetrics.record({
+            flow: mode,
+            outcome: 'error',
+            captureMs,
+            ...uiaOpt,
+            totalMs: nowMonotonicMs() - flowStartedAt
+          })
           return 'error'
       }
     }
 
     if (!deps) {
       rt.notifySystem(MSG.SERVICE_NOT_INIT)
+      selectionMetrics.record({
+        flow: mode,
+        outcome: 'error',
+        captureMs,
+        ...uiaOpt,
+        totalMs: nowMonotonicMs() - flowStartedAt,
+        ideRegion: capture.targetContext.ideRegion as MetricIdeRegion | undefined
+      })
       return 'error'
     }
 
@@ -1310,9 +1523,18 @@ export async function runSelectionFlow(
         watchdog,
         clearWatchdog
       })
+      selectionMetrics.record({
+        flow: 'show',
+        outcome: 'shown',
+        captureMs,
+        ...uiaOpt,
+        totalMs: nowMonotonicMs() - flowStartedAt,
+        ideRegion: capture.targetContext.ideRegion as MetricIdeRegion | undefined
+      })
       return 'done'
     }
 
+    const translateStartedAt = nowMonotonicMs()
     let translatedText: string
     let usedProvider: ProviderId
     let usedFallback: boolean
@@ -1334,8 +1556,18 @@ export async function runSelectionFlow(
         protectedVerifyOk = false
       }
     } catch (err) {
+      const translateMs = nowMonotonicMs() - translateStartedAt
       if (watchdog.signal.aborted || (err instanceof ProviderError && err.info.code === 'ABORTED')) {
         logInfo('selection replace flow aborted before completion')
+        selectionMetrics.record({
+          flow: 'replace',
+          outcome: 'cancelled',
+          captureMs,
+          ...uiaOpt,
+          translateMs,
+          totalMs: nowMonotonicMs() - flowStartedAt,
+          ideRegion: capture.targetContext.ideRegion as MetricIdeRegion | undefined
+        })
         return 'done'
       }
       const message =
@@ -1346,15 +1578,44 @@ export async function runSelectionFlow(
             : String(err)
       rt.notifySystem(message)
       logWarn(`translateOnce failed in replace mode: ${message}`)
+      selectionMetrics.record({
+        flow: 'replace',
+        outcome: 'error',
+        captureMs,
+        ...uiaOpt,
+        translateMs,
+        totalMs: nowMonotonicMs() - flowStartedAt,
+        ideRegion: capture.targetContext.ideRegion as MetricIdeRegion | undefined
+      })
       return 'error'
     }
 
+    const translateMs = nowMonotonicMs() - translateStartedAt
     if (watchdog.signal.aborted) {
       logInfo('selection replace flow aborted after translation')
+      selectionMetrics.record({
+        flow: 'replace',
+        outcome: 'cancelled',
+        captureMs,
+        ...uiaOpt,
+        translateMs,
+        totalMs: nowMonotonicMs() - flowStartedAt,
+        ideRegion: capture.targetContext.ideRegion as MetricIdeRegion | undefined
+      })
       return 'done'
     }
 
     if (!protectedVerifyOk) {
+      selectionMetrics.record({
+        flow: 'replace',
+        outcome: 'shown',
+        captureMs,
+        ...uiaOpt,
+        translateMs,
+        totalMs: nowMonotonicMs() - flowStartedAt,
+        ideRegion: capture.targetContext.ideRegion as MetricIdeRegion | undefined,
+        protectedHold: true
+      })
       showS11PopupFallback(
         deps,
         rt,
@@ -1378,6 +1639,15 @@ export async function runSelectionFlow(
       verificationOk: protectedVerifyOk
     })
     if (postPolicy.confirmRequired) {
+      selectionMetrics.record({
+        flow: 'replace',
+        outcome: 'shown',
+        captureMs,
+        ...uiaOpt,
+        translateMs,
+        totalMs: nowMonotonicMs() - flowStartedAt,
+        ideRegion: capture.targetContext.ideRegion as MetricIdeRegion | undefined
+      })
       showS11PopupFallback(
         deps,
         rt,
@@ -1396,43 +1666,59 @@ export async function runSelectionFlow(
       return 'done'
     }
 
-    if (capture.pasteKind !== 'normal') {
-      return await runReplaceModeTerminal({
-        translatedText,
-        rawText: capture.rawText,
-        normalizedText: text,
-        pasteKind: capture.pasteKind,
-        handle: handle0,
-        titleAtStart: capture.titleAtStart,
-        targetContext: capture.targetContext,
-        snap: capture.snap,
-        seqAfterRestore: capture.seqAfterRestore,
-        rt,
-        activeDeps: deps,
-        cfg,
-        to,
-        usedProvider,
-        usedFallback
-      })
-    }
+    const replaceExec =
+      capture.pasteKind !== 'normal'
+        ? await runReplaceModeTerminal({
+            translatedText,
+            rawText: capture.rawText,
+            normalizedText: text,
+            pasteKind: capture.pasteKind,
+            handle: handle0,
+            titleAtStart: capture.titleAtStart,
+            targetContext: capture.targetContext,
+            snap: capture.snap,
+            seqAfterRestore: capture.seqAfterRestore,
+            rt,
+            activeDeps: deps,
+            cfg,
+            to,
+            usedProvider,
+            usedFallback
+          })
+        : await runReplaceModeNormal({
+            translatedText,
+            handle: handle0,
+            targetContext: capture.targetContext,
+            snap: capture.snap,
+            seqAfterRestore: capture.seqAfterRestore,
+            pasteKind: capture.pasteKind,
+            rt,
+            activeDeps: deps,
+            to,
+            text,
+            usedProvider,
+            usedFallback
+          })
 
-    return await runReplaceModeNormal({
-      translatedText,
-      handle: handle0,
-      targetContext: capture.targetContext,
-      snap: capture.snap,
-      seqAfterRestore: capture.seqAfterRestore,
-      pasteKind: capture.pasteKind,
-      rt,
-      activeDeps: deps,
-      to,
-      text,
-      usedProvider,
-      usedFallback
+    selectionMetrics.record({
+      flow: 'replace',
+      outcome: replaceExec.metricOutcome,
+      captureMs,
+      ...uiaOpt,
+      translateMs,
+      totalMs: nowMonotonicMs() - flowStartedAt,
+      ideRegion: capture.targetContext.ideRegion as MetricIdeRegion | undefined,
+      ...(replaceExec.targetChanged ? { targetChanged: true } : {})
     })
+    return replaceExec.returnStatus
   } catch (err) {
     logError('selection flow unexpected error', err)
     rt.notifySystem(err instanceof Error ? err.message : String(err))
+    selectionMetrics.record({
+      flow: mode,
+      outcome: 'error',
+      totalMs: nowMonotonicMs() - flowStartedAt
+    })
     return 'error'
   } finally {
     if (!watchdogOwnedByShow) {

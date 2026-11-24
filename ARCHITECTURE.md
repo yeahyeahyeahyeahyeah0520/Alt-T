@@ -35,20 +35,20 @@ flowchart TB
 
     subgraph L3["L3 — Platform Adapters & Win32 FFI"]
         P_HOST["hostPlatform.ts<br/>Win32 / macOS / X11 / Wayland Seam"]
-        P_WIN32["win32Input.ts · win32Ffi.ts · win32Classifier.ts<br/>koffi SendInput · UIPI · Classifiers"]
+        P_WIN32["win32Input.ts · win32Ffi.ts · win32Classifier.ts<br/>win32Uia.ts + win32UiaWorker.ts (COM UIA Isolation)"]
         P_CLIP["clipboardBackup.ts<br/>Multi-Format Snapshot · Win+V Exclusion"]
         P_SCR["screenGeometry.ts · autoLaunch.ts"]
     end
 
     subgraph L2["L2 — HTTP & Translation Providers"]
-        PR_FB["fallback.ts<br/>Retryable Failover"]
+        PR_FB["fallback.ts<br/>Retryable Failover & Local-Only Guard"]
         PR_OAI["openaiCompatible.ts<br/>Stream/Once · Loopback Policy"]
         PR_EDGE["edgeDirect.ts<br/>Zero-Config Edge Endpoint"]
-        PR_HTTP["httpClient.ts<br/>undici fetch · ProxyAgent · Timeout/Abort Markers"]
+        PR_HTTP["httpClient.ts<br/>undici fetch · Proxy / LocalOnlyAgent · Redirect Block"]
     end
 
     subgraph L1["L1 — Pure Main Core (Zero Electron/koffi/undici)"]
-        C_CORE["src/main/core/<br/>baseUrl.ts · clipboardPolicy.ts · geometry.ts<br/>openaiPayload.ts · sseParser.ts · redact.ts"]
+        C_CORE["src/main/core/<br/>baseUrl.ts · clipboardPolicy.ts · geometry.ts · metrics.ts<br/>openaiPayload.ts · protectedText.ts · sseParser.ts · redact.ts"]
     end
 
     subgraph L0["L0 — Pure Shared Contracts (Zero Node/Electron/DOM)"]
@@ -112,42 +112,47 @@ sequenceDiagram
             alt Elevated / UIPI Blocked
                 SEL-->>User: Notify "未选中文本或目标窗口为高权限(UIPI)"
             else Same or Lower Integrity
-                SEL->>WIN: getTargetCopyKind / getTargetPasteKind + GetWindowTextW (wt)
-                Note over WIN: Class-first: CASCADIA -> wt; Console/mintty -> conhost<br/>putty/kitty/xshell/mobaxterm -> conhost; Code.exe -> normal
-                SEL->>WIN: S2: releasePressedModifiers()
-                SEL->>CLIP: S3: snap1 = backupClipboard() + writeSentinel() [Win+V excluded]
-                SEL->>WIN: S4: dispatchCopyShortcut(copyKind) [Ctrl+C / Ctrl+Shift+C / Ctrl+Insert]
-                SEL->>CLIP: S5: waitForClipboardChange(25ms, 220ms term / 400ms std)
-                alt Timeout (no selection) & Terminal
-                    SEL->>CLIP: restoreClipboard(snap1)
-                    SEL->>POP: openDirectInput(handle0) [Fallback to Alt+T]
-                else Text Captured
-                    SEL->>CLIP: S7: restoreClipboard(snap1); seqAfterS7 = GetClipboardSequenceNumber()
-                    SEL->>TR: S10b: translateOnce({text, to}, watchdog.signal)
-                    TR-->>SEL: translatedText (with retryable fallback)
-                    alt pasteKind != 'normal' & !terminalAutoBackspace (Option A Default)
-                        SEL->>POP: showPopupAtCursor(directPaste: true) + translateDone
-                        Note over POP: User reviews translation & presses Enter
-                        POP->>SEL: IPC popup:paste-to-target
-                    else pasteKind != 'normal' & terminalAutoBackspace (Option B)
-                        SEL->>WIN: Verify handleNow == handle0 & !wtTitleChanged
-                        SEL->>WIN: releasePressedModifiers() + batched VK_BACK (20/batch, 8ms)
-                    else pasteKind == 'normal' (GUI App)
-                        SEL->>WIN: Verify handleNow == handle0 (else S11 showInactiveAtCursor)
-                    end
-                    Note over SEL,CLIP: Paste & Sequence-Safe Restore
-                    SEL->>WIN: Pre-hide releasePressedModifiers() + SetForegroundWindow(target)
-                    SEL->>POP: hidePopup() [if from popup]
-                    SEL->>WIN: Poll 15ms x 8 confirming foreground == target
-                    alt Foreground Confirmed
-                        SEL->>CLIP: Reuse snap1 if seq == seqAfterS7, else backup snap2
-                        SEL->>CLIP: writeTransientClipboardText() [OS monitor/history/cloud excluded]
-                        SEL->>WIN: dispatchPasteShortcut(pasteKind)
-                        SEL->>SEL: Wait 320ms (POST_PASTE_RESTORE_DELAY_MS)
-                        SEL->>CLIP: restoreClipboardIfUnchanged(snap, text, seqAfterWrite)
-                    else Foreground Mismatch / UIPI
-                        SEL->>CLIP: Write plain translation to clipboard (no restore)
-                        SEL-->>User: Prompt manual Ctrl+V / Shift+Insert
+                SEL->>WIN: resolveIdeWindowClassification (win32UiaWorker) + GetWindowTextW (wt)
+                Note over WIN: Class-first: CASCADIA -> wt; Console/mintty -> conhost<br/>Code/JetBrains -> UIA worker ('editor'|'terminal'|'unknown')
+                alt IDE Region Unknown
+                    SEL->>CLIP: restoreClipboard(snap1) if touched
+                    SEL->>POP: openDirectInput(handle0) [or prompt manual copy]
+                else Capture Allowed
+                    SEL->>WIN: S2: releasePressedModifiers()
+                    SEL->>CLIP: S3: snap1 = backupClipboard() + writeSentinel() [Win+V excluded]
+                    SEL->>WIN: S4: dispatchCopyShortcut(copyKind) [Ctrl+C / Ctrl+Shift+C / Ctrl+Insert]
+                    SEL->>CLIP: S5: waitForClipboardChange(25ms, 220ms term / 400ms std)
+                    alt Timeout (no selection) & Terminal
+                        SEL->>CLIP: restoreClipboard(snap1)
+                        SEL->>POP: openDirectInput(handle0) [Fallback to Alt+T]
+                    else Text Captured
+                        SEL->>CLIP: S7: restoreClipboard(snap1); seqAfterS7 = GetClipboardSequenceNumber()
+                        SEL->>TR: S10b: translateOnce({text, to, protectTechnicalText, promptId}, watchdog.signal)
+                        TR-->>SEL: translatedText + protectedVerify result (placeholder integrity check)
+                        alt !protectedVerify.ok or postPolicy.confirmRequired
+                            SEL->>POP: showInactiveAtCursor() + Hold draft for manual confirm
+                        else pasteKind != 'normal' & !terminalAutoBackspace (Option A Default)
+                            SEL->>POP: showPopupAtCursor(directPaste: true) + translateDone
+                            Note over POP: User reviews/edits translation & presses Enter
+                            POP->>SEL: IPC popup:paste-to-target
+                        else pasteKind != 'normal' & terminalAutoBackspace (Option B)
+                            SEL->>WIN: verifyTargetContext + batched VK_BACK (20/batch, 8ms, re-verify each batch)
+                        else pasteKind == 'normal' (GUI App)
+                            SEL->>WIN: verifyTargetContext (handle/pid/exe/class) (else S11 showInactiveAtCursor)
+                        end
+                        Note over SEL,CLIP: Pre-Hide / Pre-Send Verify & Sequence-Safe Restore
+                        SEL->>WIN: Pre-check identity -> hidePopup() -> SetForegroundWindow(target)
+                        SEL->>WIN: Poll 15ms x 8 confirming foreground == target -> verifyTargetContext()
+                        alt Foreground & Target Identity Confirmed
+                            SEL->>CLIP: Reuse snap1 if seq == seqAfterS7, else backup snap2
+                            SEL->>CLIP: writeTransientClipboardText() [OS monitor/history/cloud excluded]
+                            SEL->>WIN: dispatchPasteShortcut(pasteKind)
+                            SEL->>SEL: Wait 320ms (POST_PASTE_RESTORE_DELAY_MS)
+                            SEL->>CLIP: restoreClipboardIfUnchanged(snap, text, seqAfterWrite)
+                        else Target Drift / UIPI Blocked
+                            SEL->>POP: reshowPopupInactive() or write plain translation (no restore)
+                            SEL-->>User: Prompt target change notice or manual Ctrl+V / Shift+Insert
+                        end
                     end
                 end
             end
@@ -245,7 +250,7 @@ flowchart TD
         BOOT3["4. configStore.load() (DPAPI hydrate + EPERM retry)<br/>Create popupWindow, tray, registerIpc"]
         BOOT4["5. syncAutoLaunch(cfg.autoLaunch):<br/>Skip if ELECTRON_RENDERER_URL<br/>Use PORTABLE_EXECUTABLE_FILE if portable<br/>Compare readShortcutLink before rewrite"]
         BOOT5["6. Register global hotkeys + 60s healMissingHotkeys()<br/>+ coalesced powerMonitor (resume/unlock/active)"]
-        QUIT["before-quit:<br/>setQuitting(true) -> markCleanExit()<br/>(clean-exit.flag)<br/>hotkeyService.dispose() -> tray.destroy() -> translateService.disposeAll()"]
+        QUIT["before-quit:<br/>setQuitting(true) -> markCleanExit()<br/>(clean-exit.flag)<br/>hotkeyService.dispose() -> tray.destroy() -> translateService.disposeAll() -> shutdownPlatformWorkers()"]
 
         BOOT0 --> BOOT1 --> BOOT2 --> BOOT3 --> BOOT4 --> BOOT5
         BOOT5 -- "Tray Quit / app.quit()" --> QUIT
@@ -261,14 +266,14 @@ flowchart TD
 
 | Layer | Path | Primary Responsibility |
 | :--- | :--- | :--- |
-| **L0** | `src/shared/types.ts` | `AppConfig`, `DEFAULT_CONFIG`, hardened `DEFAULT_PROMPTS`, `IPC_CHANNELS`, `RendererApi`, `MAX_TRANSLATE_CHARS` |
-| **L0** | `src/shared/config.ts` | `mergeConfig`, `isValidGlobalAccelerator`, `normalizeAcceleratorKey`, `findDuplicateHotkeys`, protected prompts |
+| **L0** | `src/shared/types.ts` | `AppConfig`, `DEFAULT_CONFIG`, hardened `DEFAULT_PROMPTS`, `IPC_CHANNELS`, 4-state `PopupPasteReply`, `AppOverrideConfig` |
+| **L0** | `src/shared/config.ts` | `mergeConfig`, `normalizeExeBasename`, `mergeAppOverrides`, `resolveEffectiveAppPolicy`, `pruneHistoryItems`, hotkeys |
 | **L0** | `src/shared/messages.ts` | Centralized Chinese user-facing messages (`MSG`) |
 | **L0** | `src/shared/text.ts` | `detectTargetLang`, `countGraphemes` (`Intl.Segmenter`), `countTerminalEraseChars`, `normalizeTerminalCapturedText` |
-| **L0** | `src/shared/popupState.ts` | Pure popup UI state transitions, `directPaste` lang lock, blur cleanup, `5000`-char validation |
-| **L1** | `src/main/core/*` | `baseUrl.ts` (`isLoopbackBaseUrl`), `clipboardPolicy.ts`, `geometry.ts`, `openaiPayload.ts`, `sseParser.ts`, `redact.ts` |
-| **L2** | `src/main/providers/*` | `httpClient.ts` (`undici`), `openaiCompatible.ts`, `edgeDirect.ts`, `fallback.ts` |
-| **L3** | `src/main/platform/*` | `win32Classifier.ts`, `win32Ffi.ts`, `win32Input.ts`, `hostPlatform.ts`, `clipboardBackup.ts`, `screenGeometry.ts`, `autoLaunch.ts` |
-| **L4** | `src/main/services/*` | `selectionService.ts`, `hotkeyService.ts`, `translateService.ts`, `configStore.ts`, `logger.ts` |
+| **L0** | `src/shared/popupState.ts` | Pure popup UI state transitions, `directPaste` & target drift gates, confirm/stale-edit cleanup, `5000`-char cap |
+| **L1** | `src/main/core/*` | `baseUrl.ts` (`isLoopbackBaseUrl` / `isLoopbackIp`), `protectedText.ts`, `metrics.ts`, `clipboardPolicy.ts`, `geometry.ts`, `openaiPayload.ts`, `sseParser.ts`, `redact.ts` |
+| **L2** | `src/main/providers/*` | `httpClient.ts` (`undici`, DNS/redirect local-only guard), `openaiCompatible.ts`, `edgeDirect.ts`, `fallback.ts`, `providerTest.ts` |
+| **L3** | `src/main/platform/*` | `win32Classifier.ts`, `win32Uia.ts`, `win32UiaWorker.ts`, `win32Ffi.ts`, `win32Input.ts`, `hostPlatform.ts`, `clipboardBackup.ts`, `screenGeometry.ts`, `autoLaunch.ts` |
+| **L4** | `src/main/services/*` | `selectionService.ts` (pre-send verify + Option B batches), `hotkeyService.ts`, `translateService.ts`, `configStore.ts`, `logger.ts` |
 | **L5** | `src/main/*` | `index.ts`, `ipc.ts`, `tray.ts`, `appState.ts`, `windows/popupWindow.ts`, `windows/settingsWindow.ts` |
 | **P / R** | `src/preload/`, `src/renderer/` | `contextBridge` API with fallback, `PopupView.vue`, `SettingsView.vue`, `useTranslate.ts` |
